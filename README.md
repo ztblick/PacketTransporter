@@ -37,7 +37,6 @@ request retransmissions, deliver complete data
 │                                                            │
 │   • Packetization          • Reassembly                    │
 │   • Retransmission         • Gap detection                 │
-│   • Timeout handling       • ACK/NACK generation           │
 │                                                            │
 ├────────────────────────────────────────────────────────────┤
 │                     NETWORK LAYER                          │
