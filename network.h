@@ -8,27 +8,9 @@
  * configuration settings.
  */
 
-#ifndef NETWORK_H
-#define NETWORK_H
+#pragma once
 
-#include <stdint.h>
-#include <stddef.h>
-#include "config.h"
-
-/*
- * Packet structure - students extend this by adding fields between length and payload
- *
- * CONSTRAINTS:
- *   - transmission_id must remain the FIRST field
- *   - length must remain the SECOND field
- *   - payload must remain the LAST field
- *   - Add new fields (sequence numbers, flags, etc.) between length and payload
- */
-struct packet {
-    uint32_t transmission_id;           // Identifies the transmission (MUST BE FIRST)
-    uint32_t length;                    // Payload byte count (MUST BE SECOND)
-    uint8_t payload[MAX_PAYLOAD_SIZE];  // Payload data (MUST BE LAST)
-};
+#include "data_structures.h"
 
 /*
  * network_init
@@ -37,7 +19,7 @@ struct packet {
  *
  * Returns:
  *   0  - Success
- *  -1  - Failure
+ *   1  - Failure
  */
 int network_init(void);
 
@@ -61,7 +43,7 @@ void network_cleanup(void);
  *   0  - Packet accepted
  *  -1  - Packet rejected (invalid length, NULL pointer, or invalid role)
  */
-int send_packet(struct packet* pkt, int role);
+int send_packet(PPACKET pkt, int role);
 
 /*
  * receive_packet
@@ -78,7 +60,7 @@ int send_packet(struct packet* pkt, int role);
  *   0  - Timeout (no packet arrived within timeout_ms)
  *  -1  - Error
  */
-int receive_packet(struct packet* pkt, int timeout_ms, int role);
+int receive_packet(PPACKET pkt, int timeout_ms, int role);
 
 /*
  * try_receive_packet
@@ -94,6 +76,4 @@ int receive_packet(struct packet* pkt, int timeout_ms, int role);
  *   0  - No packet available
  *  -1  - Error
  */
-int try_receive_packet(struct packet* pkt, int role);
-
-#endif /* NETWORK_H */
+int try_receive_packet(PPACKET pkt, int role);

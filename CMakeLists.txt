@@ -5,4 +5,5 @@ set(CMAKE_C_STANDARD 11)
 
 add_executable(PacketTransporter application.c network.c
         network.h
-        transport.c)
+        transport.c
+        data_structures.h)

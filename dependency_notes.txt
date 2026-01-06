@@ -1,0 +1,23 @@
+Here are how file dependencies work in this project:
+
+File                    Description
+
+application.h           Contains structs and functions for statistics
+    |                   and transmission validation.
+    |
+    V
+transport.h             Contains functions for send_transmission() and
+    |                   receive_transmission().
+    |
+    V
+network.h               Contains functions headers and error codes
+    |                   for the network functions.
+    |
+    V
+data_structures.h       Contains packet struct
+    |
+    |
+    V
+config.h                Contains settings for the project, such as
+                        latency and bandwidth constants, max payload size,
+                        packet wait time, drop rates, etc.

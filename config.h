@@ -7,6 +7,10 @@
 
 #pragma once
 
+#include <windows.h>
+#include <stdint.h>
+#include <stddef.h>
+
 /* Packet settings */
 #define MAX_PAYLOAD_SIZE 1024
 

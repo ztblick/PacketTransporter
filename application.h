@@ -8,12 +8,9 @@
  * and a receiver thread that validates completed transmissions.
  */
 
-#ifndef APPLICATION_H
-#define APPLICATION_H
+#pragma once
 
-#include <windows.h>
-#include <stdint.h>
-#include <stddef.h>
+#include "network.h"
 
 /*
  * Transmission record - tracks a sent transmission for later validation
@@ -55,16 +52,17 @@ struct test_stats {
  * Multiple instances can run concurrently on separate threads.
  *
  * Parameters:
- *   arg - Pointer to a transmission_record containing:
+ *   arg - Pointer to a transmission_info record containing:
  *         id, data, and length to send
  *
  * Returns:
- *   0 (result stored in transmission_record)
+ *   0 - Transmission sent and acknowledged by transport layer
+ *   1 - Error
  *
  * Usage:
- *   CreateThread(NULL, 0, sender_thread, &record, 0, NULL);
+ *   CreateThread(NULL, 0, sender_thread, &transmission_info, 0, NULL);
  */
-DWORD WINAPI sender_thread(LPVOID arg);
+int sender_thread(PVOID transmission_info);
 
 /*
  * receiver_thread
@@ -74,8 +72,7 @@ DWORD WINAPI sender_thread(LPVOID arg);
  * until all expected transmissions are received or timeout.
  *
  * Parameters:
- *   arg - Pointer to receiver_config struct (defined in application.c)
- *         containing expected count, timeout settings, etc.
+ *   none
  *
  * Returns:
  *   0 (results stored in test_stats)
@@ -83,7 +80,7 @@ DWORD WINAPI sender_thread(LPVOID arg);
  * Usage:
  *   CreateThread(NULL, 0, receiver_thread, &config, 0, NULL);
  */
-DWORD WINAPI receiver_thread(LPVOID arg);
+int receiver_thread(VOID);
 
 /*
  * run_test
@@ -109,5 +106,3 @@ int run_test(int num_transmissions, struct test_stats* stats);
  *   stats - Pointer to populated test_stats struct
  */
 void print_stats(struct test_stats* stats);
-
-#endif /* APPLICATION_H */

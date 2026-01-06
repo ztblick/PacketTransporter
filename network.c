@@ -8,10 +8,7 @@
  * corrupted, or reordered depending on configuration settings.
  */
 
-#include <stdint.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include "network.h"
+#include "application.h"
 
 /*
  * Network buffers - two directional queues
@@ -49,7 +46,7 @@ void network_cleanup(void) {
  *
  * Sends a packet through the simulated network.
  */
-int send_packet(struct packet* pkt, int role) {
+int send_packet(PPACKET pkt, int role) {
     // Validate inputs
     if (pkt == NULL) {
         return -1;
@@ -64,7 +61,7 @@ int send_packet(struct packet* pkt, int role) {
     }
 
     // Calculate actual bytes to transmit: header + payload
-    size_t header_size = offsetof(struct packet, payload);
+    size_t header_size = offsetof(PACKET, payload);
     size_t transmit_size = header_size + pkt->length;
     (void)transmit_size;  // Suppress unused warning for now
 
@@ -106,7 +103,7 @@ int receive_packet(struct packet* pkt, int timeout_ms, int role) {
  *
  * Attempts to receive a packet without waiting.
  */
-int try_receive_packet(struct packet* pkt, int role) {
+int try_receive_packet(PPACKET pkt, int role) {
     if (pkt == NULL) {
         return -1;
     }

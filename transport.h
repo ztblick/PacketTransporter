@@ -7,11 +7,9 @@
  * over the unreliable network layer.
  */
 
-#ifndef TRANSPORT_H
-#define TRANSPORT_H
+#pragma once
 
-#include <stdint.h>
-#include <stddef.h>
+#include "network.h"
 
 /*
  * send_transmission
@@ -25,12 +23,10 @@
  *
  * Returns:
  *   0  - Success (all data acknowledged by receiver)
- *  -1  - Failure (unrecoverable error, timeout, etc.)
+ *   1  - Failure (unrecoverable error, timeout, etc.)
  *
  * Notes:
- *   - Must handle being called concurrently from multiple threads
  *   - Must break data into packets, each tagged with transmission_id
- *   - Must handle ACKs/NACKs from receiver and retransmit as needed
  *   - Should return only after transmission is complete or has failed
  */
 int send_transmission(uint32_t transmission_id, void* data, size_t length);
@@ -48,18 +44,15 @@ int send_transmission(uint32_t transmission_id, void* data, size_t length);
  *   timeout_ms - Maximum time to wait for a completed transmission
  *
  * Returns:
- *   1  - Transmission received successfully (out_id, dest, out_length filled in)
- *   0  - Timeout (no transmission completed within timeout_ms)
- *  -1  - Error
+ *   0  - Transmission received successfully (out_id, dest, out_length filled in)
+ *   1  - Timeout (no transmission completed within timeout_ms)
+ *   2  - Error
  *
  * Notes:
- *   - Returns ANY completed transmission, not a specific one
+ *   - Returns a completed transmission
  *   - Transmissions may complete in any order
- *   - Must track multiple in-flight transmissions by transmission_id
+ *   - Must track in-flight transmissions by transmission_id
  *   - Must reassemble packets into complete transmissions
- *   - Must send ACKs/NACKs to sender via send_packet()
  *   - Caller is responsible for providing a dest buffer large enough
  */
 int receive_transmission(uint32_t* out_id, void* dest, size_t* out_length, int timeout_ms);
-
-#endif /* TRANSPORT_H */
