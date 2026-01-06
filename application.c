@@ -147,7 +147,15 @@ void print_stats(struct test_stats* stats) {
  * Entry point. Initializes timer and network, runs test, prints results.
  */
 int main(void) {
-    // TODO: Implement
+
+    // Initialize the application, transport layer, and network
+    network_init();
+
+
+
+    // Free all data in the application, transport layer, and network
+    network_cleanup();
+
     return 0;
 }
 
