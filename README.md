@@ -14,7 +14,7 @@ are provided. The student's job is to bridge them: break data into packets,
 handle losses and reordering, manage retransmissions, and reassemble everything
 correctly on the other side.
 
-## What You'll Build
+## What Students Build
 
 - **Sender**: Break transmissions into packets, send them, retransmit when needed
 - **Receiver**: Reassemble packets, detect gaps,
