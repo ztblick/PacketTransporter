@@ -201,7 +201,7 @@ int send_packet(PPACKET pkt, int role);
  *   PACKET_RECEIVED         - Packet received successfully
  *   NO_PACKET_AVAILABLE     - Timeout (no packet arrived within timeout_ms)
  */
-int receive_packet(PPACKET pkt, int timeout_ms, int role);
+int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role);
 
 /*
  * try_receive_packet
