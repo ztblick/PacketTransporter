@@ -10,9 +10,7 @@
 #include <windows.h>
 #include <stdint.h>
 #include <stddef.h>
-
-// Global debug mode switch
-#define DEBUG   1
+#include "debug.h"
 
 // Maximum number of bytes per packet
 #define MAX_PAYLOAD_SIZE        1024
@@ -37,12 +35,3 @@
  * Set to 0 for in-order delivery
  */
 #define NETWORK_REORDER_ENABLED 0
-
-/*
- *  Debugging tools
- */
-#if DEBUG
-#define ASSERT(x)       if (!(x)) {DebugBreak();}
-#else
-#define ASSERT(x)
-#endif

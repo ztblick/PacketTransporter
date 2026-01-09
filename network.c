@@ -78,6 +78,10 @@ typedef struct __network_state {
 // Our state object, keeping track of all relevant information for our network!
 NETWORK_STATE n;
 
+#if DEBUG
+uint32_t packetStates[TOTAL_PACKETS_MULTITHREADED];
+#endif
+
 /*
  * time_init
  *
@@ -122,6 +126,10 @@ void network_init(void) {
 
     // Update state
     n.initialized = TRUE;
+
+#if DEBUG
+    memset(packetStates, UNSENT, TOTAL_PACKETS_MULTITHREADED * sizeof(uint32_t));
+#endif
 }
 
 
@@ -147,6 +155,14 @@ void network_cleanup(void) {
  */
 void push(PNETWORK_BUFFER buffer, PBUFFER_ENTRY entry) {
 
+#if DEBUG
+    ASSERT(packetStates[entry->packet.transmission_id] == UNSENT);
+    ASSERT(entry->packet.packet_state == UNSENT);
+
+    entry->packet.packet_state = SENT;
+    packetStates[entry->packet.transmission_id] = SENT;
+#endif
+
     ASSERT(buffer->size < NETWORK_BUFFER_CAPACITY);
     // Copy the data into the buffer
     memcpy(buffer->entries + buffer->back, entry, sizeof(BUFFER_ENTRY));
@@ -168,7 +184,7 @@ void push(PNETWORK_BUFFER buffer, PBUFFER_ENTRY entry) {
  *  If this is the last entry, reset the packets available event.
  *  Precondition: wire and buffer locks acquired, buffer is NOT empty.
  */
-int pop(PNETWORK_BUFFER buffer, PBUFFER_ENTRY entry) {
+int pop(PNETWORK_BUFFER buffer, PPACKET destPacket) {
 
     ASSERT(buffer->size > 0);
 
@@ -176,8 +192,19 @@ int pop(PNETWORK_BUFFER buffer, PBUFFER_ENTRY entry) {
     PBUFFER_ENTRY frontEntry = buffer->entries + buffer->front;
     if (frontEntry->time_available > time_now_ms()) return NO_PACKET_AVAILABLE;
 
-    // Otherwise, copy data into the entry
-    memcpy(entry, buffer->entries + buffer->front, sizeof(BUFFER_ENTRY));
+#if DEBUG
+    ASSERT(frontEntry->packet.packet_state == SENT);
+    ASSERT(packetStates[frontEntry->packet.transmission_id] == SENT);
+
+    frontEntry->packet.packet_state = RECEIVED;
+    packetStates[frontEntry->packet.transmission_id] = RECEIVED;
+#endif
+
+    // Otherwise, copy data into the packet
+    PPACKET frontPacket = &frontEntry->packet;
+    destPacket->length = frontPacket->length;
+    destPacket->transmission_id = frontPacket->transmission_id;
+    memcpy(destPacket->payload, frontPacket->payload, frontPacket->length);
 
     // Advance the queue head
     buffer->front = (buffer->front + 1) % NETWORK_BUFFER_CAPACITY;
@@ -207,14 +234,14 @@ int send_packet(PPACKET pkt, int role) {
 
     // Select buffer based on role
     PNETWORK_BUFFER buffer = &n.buffer_sender_to_receiver;
-    CRITICAL_SECTION wire_lock = n.wire_lock_push_sender_to_receiver;
+    PCRITICAL_SECTION wire_lock = &n.wire_lock_push_sender_to_receiver;
     if (role == ROLE_RECEIVER) {
         buffer = &n.buffer_receiver_to_sender;
-        wire_lock = n.wire_lock_push_receiver_to_sender;
+        wire_lock = &n.wire_lock_push_receiver_to_sender;
     }
 
     // Lock wire
-    EnterCriticalSection(&wire_lock);
+    EnterCriticalSection(wire_lock);
 
     // TODO add a loop to spin, simulating synchronization delay
     //  and add back the documentation about it, including relevant calculations
@@ -226,7 +253,7 @@ int send_packet(PPACKET pkt, int role) {
 
     // If buffer full, return PACKET_REJECTED
     if (buffer->size == NETWORK_BUFFER_CAPACITY) {
-        LeaveCriticalSection(&wire_lock);
+        LeaveCriticalSection(wire_lock);
         return PACKET_REJECTED;
     }
 
@@ -236,7 +263,7 @@ int send_packet(PPACKET pkt, int role) {
     push(buffer, &entry);
 
     // Unlock the wire
-    EnterCriticalSection(&wire_lock);
+    LeaveCriticalSection(wire_lock);
 
     return PACKET_ACCEPTED;  // Accepted
 }
@@ -248,7 +275,7 @@ int send_packet(PPACKET pkt, int role) {
  * Receives a packet from the simulated network, waiting up to timeout_ms.
  */
 int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
-    if (pkt == NULL || timeout_ms < 0) {
+    if (pkt == NULL) {
         return NO_PACKET_AVAILABLE;
     }
 
@@ -258,37 +285,37 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
 
     // Determine buffer and wire lock
     PNETWORK_BUFFER buffer = &n.buffer_sender_to_receiver;
-    CRITICAL_SECTION wire_lock = n.wire_lock_pop_sender_to_receiver;
+    PCRITICAL_SECTION wire_lock = &n.wire_lock_pop_sender_to_receiver;
     if (role == ROLE_SENDER) {
         buffer = &n.buffer_receiver_to_sender;
-        wire_lock = n.wire_lock_pop_receiver_to_sender;
+        wire_lock = &n.wire_lock_pop_receiver_to_sender;
     }
 
-    ULONG64 remaining_time = timeout_ms;
-    ULONG64 deadline = time_now_ms() + remaining_time;
+    ULONG64 deadline = time_now_ms() + timeout_ms;
 
     while (TRUE) {
         // Acquire wire lock
-        EnterCriticalSection(&wire_lock);
+        EnterCriticalSection(wire_lock);
 
         // If there are no packets available, release lock and wait for event.
         if (buffer->size == 0) {
-            LeaveCriticalSection(&wire_lock);
-            WaitForSingleObject(buffer->packetsAvailable, remaining_time);
+            LeaveCriticalSection(wire_lock);
+            WaitForSingleObject(buffer->packetsAvailable, timeout_ms);
 
             // Check for a timeout
-            remaining_time = deadline - time_now_ms();
-            if (remaining_time < 0) return PACKET_REJECTED;
+            if (time_now_ms() > deadline) return PACKET_REJECTED;
             continue;
         }
 
         // Otherwise, grab a packet from the buffer and release the lock
-        BUFFER_ENTRY entry;
-        pop(buffer, &entry);
-        LeaveCriticalSection(&wire_lock);
+        ASSERT(buffer->size > 0);
+        if (pop(buffer, pkt) == NO_PACKET_AVAILABLE) {
+            LeaveCriticalSection(wire_lock);
+            continue;
+        }
+        LeaveCriticalSection(wire_lock);
 
-        // fill pkt and return success
-        memcpy(&pkt, &entry.packet, sizeof(PACKET));
+        ASSERT(pkt->length > 0 && pkt->length <= MAX_PAYLOAD_SIZE);
         return PACKET_RECEIVED;
     }
 

@@ -19,5 +19,7 @@ data_structures.h       Contains packet struct
     |
     V
 config.h                Contains settings for the project, such as
-                        latency and bandwidth constants, max payload size,
-                        packet wait time, drop rates, etc.
+    |                   latency and bandwidth constants, max payload size,
+    |                   packet wait time, drop rates, etc.
+    V
+debug.h                 Debugging tools.
