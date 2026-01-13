@@ -12,8 +12,13 @@
 #include <stddef.h>
 #include "debug.h"
 
+// Conversions
+#define KB(x)       ((x) * 1024)
+#define MB(x)       (KB(x) * 1024)
+#define GB(x)       (MB(x) * 1024)
+
 // Maximum number of bytes per packet
-#define MAX_PAYLOAD_SIZE        1024
+#define MAX_PAYLOAD_SIZE        KB(1)
 
 // Default timeout for receive_packet (milliseconds)
 #define PACKET_WAIT_TIME_MS     500

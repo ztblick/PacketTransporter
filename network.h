@@ -13,12 +13,25 @@
  *
  * This layer simulates realistic network behavior, including:
  *
- *   0. SERIALIZATION DELAY - Time to push bits onto the wire (microseconds -- not implemented)
+ *   0. SERIALIZATION DELAY - Time to push bits onto the wire
  *   1. PROPAGATION DELAY  - Time for bits to travel across the network
  *   2. SHARED BANDWIDTH   - All connections compete for the same link
  *   3. FINITE BUFFERS     - Packets dropped when buffer is full
  *
+ * SERIALIZATION DELAY
+ * -------------------
+ * A physical network link can only transmit one bit at a time. The time to
+ * "serialize" a packet onto the wire depends on packet size and link bandwidth:
  *
+ *   serialization_delay = (packet_size_bits) / (bandwidth_bps)
+ *
+ * Example at 100 Mbps with a 1 KB packet:
+ *
+ *   1024 bytes * 8 bits/byte = 8,192 bits
+ *   8,192 bits / 100,000,000 bits/sec = 81.92 microseconds
+ *
+ * While one packet is being serialized, other packets must wait. This is
+ * enforced with a "wire mutex" - only one packet can be on the wire at a time.
  *
  * PROPAGATION DELAY
  * -----------------
@@ -131,7 +144,7 @@
  * Sized for ~84 ms of buffering at full bandwidth.
  * Packets are dropped when buffer is full.
  */
-#define NETWORK_BUFFER_CAPACITY           1024
+#define NETWORK_BUFFER_CAPACITY           KB(8)
 
 /*
  * ============================================================================
