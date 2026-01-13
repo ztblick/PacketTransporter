@@ -7,76 +7,107 @@
 #include "network.h"
 
 /*
- * Buffer entry objects - include packet, entry time, and available time
+ * Buffer entry objects - include packet and available time
  */
-
 typedef struct buffer_entry {
     ULONG64 time_available;
     PACKET packet;
 } BUFFER_ENTRY, *PBUFFER_ENTRY;
 
 /*
- * Network buffers - two directional queues with locks and condition
- * variables for signalling. The buffer is protected from concurrent producers
- * or concurrent consumers by the wire lock. And with two concurrent accesses -- a producer
- * and consumer at the same time -- the size is an atomic variable preventing
- * race conditions.
+ * Network buffer: a contiguous region of memory into which packets are copied. All packets are
+ * given a timestamp of current_time + latency. This is used to determine the arrival time of the
+ * packet.
+ *
+ * Each has a bitmap which serves as a lock on the slot. When the NIC->network thread sees a 0,
+ * it can claim that slot. Since there is only one thread, it can write to that slot safely.
+ * When finished, it will use an interlocked operation to set that bit, which tells the net->NIC
+ * thread that the slot is full and can be read from.
  */
 typedef struct network_buffer {
-    uint16_t front;
-    uint16_t back;
-    volatile SHORT size;
-    BUFFER_ENTRY entries[NETWORK_BUFFER_CAPACITY];
+
+    BUFFER_ENTRY packets[NETWORK_BUFFER_CAPACITY];
+
+    // We want one bit per packet and a minimum of one "row" in our bitmap. So we add 63 to always
+    // have at least one row without adding an extra row superfluously (e.g. 1 packet capacity = 1 ULONG64,
+    // 63 packet capacity = 1 ULONG64, 127 packets = 2 ULONG64, 128 -> 2, 129 -> 3, etc.)
+    ULONG64 lock[(NETWORK_BUFFER_CAPACITY + 63) / 64];
 
     // When this buffer's event is set, a thread waiting for
     // a packet is woken. This is a manual reset event, as
     // threads should continue to consume packets until there are
     // NONE left.
-    HANDLE packetsAvailable;
+    HANDLE packets_added_to_network;
 } NETWORK_BUFFER, *PNETWORK_BUFFER;
 
 /*
  *  Initialize a network buffer object.
  */
 void initialize_network_buffer(PNETWORK_BUFFER buffer) {
-    buffer->back = 0;
-    buffer->front = 0;
-    buffer->size = 0;
-    memset(buffer->entries, 0, NETWORK_BUFFER_CAPACITY * sizeof(BUFFER_ENTRY));
 
-    buffer->packetsAvailable = CreateEvent(
-        NULL,                       // Default security attributes
-        TRUE,                       // Manual reset event!
-        FALSE,                      // Initially the event is NOT set.
-        TEXT("PacketsReadyEvent")   // Event name
+    memset(buffer->packets, 0, NETWORK_BUFFER_CAPACITY * sizeof(BUFFER_ENTRY));
+    memset(buffer->lock, 0, (NETWORK_BUFFER_CAPACITY + 63) / 64);
+
+    buffer->packets_added_to_network = CreateEvent(
+        NULL,                                   // Default security attributes
+        TRUE,                                   // Manual reset event!
+        FALSE,                                  // Initially the event is NOT set.
+        TEXT("PacketsAddedToNetworkEvent")      // Event name
         );
 }
+
+/*
+ *  NIC outbound buffer: this is very similar to the network buffer, only smaller. In this case, though, since
+ *  MULTIPLE threads can be expected to write to the NIC buffer at once, we will need two bitmaps:
+ *  The first will protect a slot from concurrent writes from multiple send_packet threads. When a
+ *  sending thread reserves a slot (using an interlocked compare/exchange), that slot will be unavailable
+ *  to other sending threads. Then, once the sending thread has finished its memcopy, it will set the
+ *  bit in the OTHER bitmap, which alerts the NIC->network thread that the given slot is available for pickup.
+
+ */
+typedef struct nic_buffer {
+
+    PACKET packets[NIC_BUFFER_CAPACITY];
+    // Sending threads set reserve_slot to 1, write their packet, then set packet_ready to 1
+    ULONG64 reserve_slot_lock[(NIC_BUFFER_CAPACITY + 63) / 64];
+    // NIC->network finds a 1 in packet_ready, writes its data to the network, then clears the
+    // packet_ready bit and then the reserve_slot bit
+    ULONG64 packet_ready_lock[(NIC_BUFFER_CAPACITY + 63) / 64];
+
+    HANDLE packets_added_to_nic;
+
+} NIC_BUFFER, *PNIC_BUFFER;
+
+/*
+ *  Net_to_NIC buffer: this buffer represents the NIC of the receiving machine. In this case, only one thread fills
+ *  slots, but multiple transport threads can clear slots. So, to facilitate this, the network thread writes its
+ *  data to an empty slot (represented by a 0 in the packet_ready_lock lock), then sets that bit to 1. Then, a receiver
+ *  thread may come along and see a 1 in the packet ready lock. If it can successfully set that corresponding bit
+ *  in the reserve_slot lock, then they know they have that packet. They transfer the data, then reset both bits to 0.
+ */
+
 
 /*
  *  Network state variable, encapsulating all information about the network.
  */
 typedef struct __network_state {
-    // Buffers
-    NETWORK_BUFFER buffer_sender_to_receiver;
-    NETWORK_BUFFER buffer_receiver_to_sender;
-
-    // Wire locks
-    CRITICAL_SECTION wire_lock_push_sender_to_receiver;
-    CRITICAL_SECTION wire_lock_push_receiver_to_sender;
-    CRITICAL_SECTION wire_lock_pop_sender_to_receiver;
-    CRITICAL_SECTION wire_lock_pop_receiver_to_sender;
-
-    // Timing variables
-    LARGE_INTEGER perf_frequency;
-    LARGE_INTEGER time_start;
+    // Sender -> Receiver Network
+    NIC_BUFFER outbound_NIC;
+    NETWORK_BUFFER network_buffer;
+    NIC_BUFFER inbound_NIC;
 
     // State
     BOOL initialized;
 } NETWORK_STATE, *PNETWORK_STATE;
 
 
-// Our state object, keeping track of all relevant information for our network!
-NETWORK_STATE n;
+// Our state objects, keeping track of all relevant information for our two networks!
+NETWORK_STATE SR_net;
+NETWORK_STATE RS_net;
+
+// Timing variables
+LARGE_INTEGER perf_frequency;
+LARGE_INTEGER time_start;
 
 #if DEBUG
 uint32_t packetStates[TOTAL_PACKETS_MULTITHREADED];
@@ -88,8 +119,8 @@ uint32_t packetStates[TOTAL_PACKETS_MULTITHREADED];
  * Initializes the high-resolution timer. Call once at program start.
  */
 static void time_init(void) {
-    QueryPerformanceFrequency(&n.perf_frequency);
-    QueryPerformanceCounter(&n.time_start);
+    QueryPerformanceFrequency(&perf_frequency);
+    QueryPerformanceCounter(&time_start);
 }
 
 /*
@@ -100,32 +131,32 @@ static void time_init(void) {
 static uint64_t time_now_ms(void) {
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
-    return (uint64_t)((now.QuadPart - n.time_start.QuadPart) * 1000 / n.perf_frequency.QuadPart);
+    return (uint64_t)((now.QuadPart - time_start.QuadPart) * 1000 / perf_frequency.QuadPart);
 }
 
+void net_init(PNETWORK_STATE n) {
+
+    initialize_network_buffer(&n->network_buffer);
+
+    // TODO Initialize NIC cards
+
+    n->initialized = TRUE;
+
+}
 
 /*
  * network_init
  *
  * Initializes the network layer buffers and synchronization primitives.
  */
-void network_init(void) {
+void create_network_layer(void) {
 
-    // Create buffers
-    initialize_network_buffer(&n.buffer_receiver_to_sender);
-    initialize_network_buffer(&n.buffer_sender_to_receiver);
-
-    // Initialize locks
-    InitializeCriticalSection(&n.wire_lock_push_sender_to_receiver);
-    InitializeCriticalSection(&n.wire_lock_pop_sender_to_receiver);
-    InitializeCriticalSection(&n.wire_lock_push_receiver_to_sender);
-    InitializeCriticalSection(&n.wire_lock_pop_receiver_to_sender);
+    // Initialize networks
+    net_init(&SR_net);
+    net_init(&RS_net);
 
     // Initialize timing
     time_init();
-
-    // Update state
-    n.initialized = TRUE;
 
 #if DEBUG
     memset(packetStates, UNSENT, TOTAL_PACKETS_MULTITHREADED * sizeof(uint32_t));
@@ -139,13 +170,8 @@ void network_init(void) {
  * Frees network layer resources.
  */
 void network_cleanup(void) {
-    DeleteCriticalSection(&n.wire_lock_push_sender_to_receiver);
-    DeleteCriticalSection(&n.wire_lock_pop_sender_to_receiver);
-    DeleteCriticalSection(&n.wire_lock_push_receiver_to_sender);
-    DeleteCriticalSection(&n.wire_lock_pop_receiver_to_sender);
-    CloseHandle(&n.buffer_receiver_to_sender.packetsAvailable);
-    CloseHandle(&n.buffer_sender_to_receiver.packetsAvailable);
-    n.initialized = FALSE;
+
+    // TODO free any events or other dynamically allocated data
 }
 
 /*
@@ -164,6 +190,17 @@ void network_cleanup(void) {
  */
 void NIC_to_wire_thread(void) {
 
+    // wait for NIC event, exit event, or timeout:
+    //
+    //     scan NIC for available packets
+    //
+    //     if none found, reset NIC event and continue
+    //
+    //     write packet to network buffer (if none available, expand network buffer size)
+    //
+    //     wait for serialization delay
+    //
+    //     move on to next slot
 }
 
 /*
@@ -226,7 +263,7 @@ void push(PNETWORK_BUFFER buffer, PBUFFER_ENTRY entry) {
 
     ASSERT(buffer->size < NETWORK_BUFFER_CAPACITY);
     // Copy the data into the buffer
-    memcpy(buffer->entries + buffer->back, entry, sizeof(BUFFER_ENTRY));
+    memcpy(buffer->packets + buffer->back, entry, sizeof(BUFFER_ENTRY));
 
     // Advance queue tail
     // The other thread does not modify back, so we will not have any race
@@ -237,7 +274,7 @@ void push(PNETWORK_BUFFER buffer, PBUFFER_ENTRY entry) {
     InterlockedIncrement16(&buffer->size);
 
     // Signal condition variable to wake up any waiting threads on the receiving end
-    SetEvent(buffer->packetsAvailable);
+    SetEvent(buffer->packets_added_to_network);
 }
 
 /*
@@ -250,7 +287,7 @@ int pop(PNETWORK_BUFFER buffer, PPACKET destPacket) {
     ASSERT(buffer->size > 0);
 
     // Ensure that the arrival time of the packet is valid
-    PBUFFER_ENTRY frontEntry = buffer->entries + buffer->front;
+    PBUFFER_ENTRY frontEntry = buffer->packets + buffer->front;
     if (frontEntry->time_available > time_now_ms()) return NO_PACKET_AVAILABLE;
 
 #if DEBUG
@@ -274,7 +311,7 @@ int pop(PNETWORK_BUFFER buffer, PPACKET destPacket) {
     InterlockedDecrement16(&buffer->size);
 
     // If this was the last packet available, reset the event
-    if (buffer->size == 0) ResetEvent(buffer->packetsAvailable);
+    if (buffer->size == 0) ResetEvent(buffer->packets_added_to_network);
 
     return PACKET_RECEIVED;
 }
@@ -361,7 +398,7 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
         // If there are no packets available, release lock and wait for event.
         if (buffer->size == 0) {
             LeaveCriticalSection(wire_lock);
-            WaitForSingleObject(buffer->packetsAvailable, timeout_ms);
+            WaitForSingleObject(buffer->packets_added_to_network, timeout_ms);
 
             // Check for a timeout
             if (time_now_ms() > deadline) return PACKET_REJECTED;

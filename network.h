@@ -146,6 +146,10 @@
  */
 #define NETWORK_BUFFER_CAPACITY           KB(8)
 
+/* Size of the network card on either machine. This is in terms of PACKETS.
+ */
+#define NIC_BUFFER_CAPACITY               256
+
 /*
  * ============================================================================
  * DERIVED CONSTANTS (computed from simulation parameters)
@@ -172,7 +176,7 @@
  * Returns:
  *   void
  */
-void network_init(void);
+void create_network_layer(void);
 
 /*
  * network_cleanup
