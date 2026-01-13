@@ -149,6 +149,67 @@ void network_cleanup(void) {
 }
 
 /*
+ *  Manage transfers from the user's network card to the network. In this simulation, the network
+ *  card and network are simply buffers. This worker thread moves packets from the NIC to the network
+ *  as fast as it can. In doing so, it clears out slots on the NIC, allowing the sending party to
+ *  enqueue more packets.
+ *
+ *  Edge case: if there are no slots available in the network, the packet is rejected.
+ *
+ *  Note: this thread will always take a set amount of time to emulate the "serialization delay"
+ *  in the network: with a given bandwidth, data can be written on the wire at a specific speed.
+ *  This thread will not exceed those speeds as defined in the configuration file.
+ *
+ *  Parameter: struct giving the specific memory buffer and the NIC this thread manages.
+ */
+void NIC_to_wire_thread(void) {
+
+}
+
+/*
+ *  Manage transfers from wire to NIC. In this simulation, once packets "arrive" at the other end
+ *  of the network, they must be written into the user's NIC. Once they are written to the NIC (in
+ *  this simulation, a buffer) that space is cleared in the network.
+ *
+ *  Edge case: if there are no available slots in the NIC, the packet is dropped.
+ *
+ *  Parameter: struct giving the specific memory buffer and the NIC this thread manages.
+ */
+void wire_to_NIC_thread(void) {
+    // while (running) {
+    //     earliest_eta = UINT64_MAX
+    //     now = time_now_ms()
+    //
+    //     // Scan network buffer, process arrived packets
+    //     for each packet in network_buffer:
+    //         if packet.arrival_time <= now:
+    //             move_to_receiver_buffer(packet)
+    //             remove_from_network_buffer(packet)
+    //         else:
+    //             if packet.arrival_time < earliest_eta:
+    //                 earliest_eta = packet.arrival_time
+    //
+    //     // Recheck time (processing took some time)
+    //     now = time_now_ms()
+    //
+    //     if earliest_eta <= now:
+    //         // More work to do, loop immediately
+    //         continue
+    //
+    //     if earliest_eta == UINT64_MAX:
+    //         // Buffer empty, sleep until signaled that packet was added
+    //         wait_for_signal(packet_added_event, INFINITE)
+    //     else:
+    //         // Sleep until next arrival
+    //         sleep_duration = earliest_eta - now
+    //         wait_for_signal(packet_added_event, sleep_duration)
+    //
+    //     // Either timer expired or new packet arrived - loop and scan again
+    // }
+}
+
+
+/*
  *  Push the entry into the buffer.
  *  Memory must be copied into the buffer.
  *  Precondition: buffer and wire are locked, buffer has room for at least one packet.

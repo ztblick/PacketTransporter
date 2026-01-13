@@ -1,0 +1,37 @@
+Network Layer:
+
+The initial architecture of the network layer utilizes two buffers.
+Sending threads push to a buffer that receiving threads pull from,
+and receiving threads push to a buffer that sending threads pull from.
+
+This version has been synchronized and works well as long as the
+buffer does not become entirely full, in which case packets are dropped
+when attempting to send.
+
+The problem with this approach is that it will not scale. All threads
+need to serialize behind the buffer locks, which means the vast majority
+of the time on the trace is spent in enter and leave critical section.
+(e.g. send_packet has a count of 14 in my trace, 8 of which is
+on EnterCriticalSection, 2 on CritSec contended and leave critsec.
+receive_packet has a count of 36, of which 33 is enter/leave critsec.
+
+All in all, 41/50 = 82% of computation is spent on this single wire
+lock contention. This motivates the need for a more elegant and scalable
+approach so the only limitations will be the bandwidth and latency of
+the system, NOT the architecture of the code powering the simulation.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Here's the new design for the network layer:
+
+wait for NIC event, exit event, or timeout:
+
+    scan NIC for available packets
+
+    if none found, reset NIC event and continue
+
+    write packet to network buffer (if none available, expand network buffer size)
+
+    wait for serialization delay
+
+    move on to next slot
