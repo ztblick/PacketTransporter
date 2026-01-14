@@ -342,13 +342,48 @@ static int test_multi_threaded(void) {
  * ============================================================================
  */
 
+void initialize_layers_and_all_data(void) {
+
+    simulation_begin = CreateEvent(
+        NULL,                                   // Default security attributes
+        TRUE,                                   // Manual reset event!
+        FALSE,                                   // Initially the event is NOT set.
+        TEXT("BeginSimulationEvent")            // Event name
+        );
+
+    simulation_end = CreateEvent(
+        NULL,
+        TRUE,
+        FALSE,
+        TEXT("EndSimulationEvent")
+        );
+
+    create_network_layer();
+
+    // Initialize timing
+    time_init();
+
+    SetEvent(simulation_begin);
+}
+
+void free_all_data_and_shut_down(void) {
+
+    SetEvent(simulation_end);
+
+    network_cleanup();
+
+    CloseHandle(simulation_begin);
+    CloseHandle(simulation_end);
+}
+
 int main(void) {
     printf("Network Layer Test Suite\n");
     printf("========================\n");
 
     /* Initialize network layer */
-    printf("\nInitializing network layer...\n");
-    network_init();
+    printf("\nAll data for network layer test...\n");
+
+    initialize_layers_and_all_data();
 
     int pass_count = 0;
     int total_tests = 2;
@@ -358,8 +393,7 @@ int main(void) {
         pass_count++;
     }
 
-    network_cleanup();
-    network_init();
+    free_all_data_and_shut_down();
 
 
     if (test_multi_threaded()) {

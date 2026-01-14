@@ -122,13 +122,19 @@
  * Packets are dropped when buffer is full.
  */
 #define NETWORK_BUFFER_CAPACITY           KB(8)
+#define NETWORK_BITMAP_ROWS               ((NETWORK_BUFFER_CAPACITY + 63) / 64)
 
 // Size of the network card on either machine. This is in terms of PACKETS.
 #define NIC_BUFFER_CAPACITY               256
+#define NIC_BITMAP_ROWS                   ((NIC_BUFFER_CAPACITY + 63) / 64)
+
+#define BITMAP_ROW_FULL_VALUE             ((LONG64) -1)
 
 // The default timeout for a network helper thread, in milliseconds
 #define NIC_RETRY_MS                      10
+#define MAX_NIC_MISSES_BEFORE_SLEEP       NIC_BUFFER_CAPACITY
 
+#define NO_NIC_SLOT_AVAILABLE             -1
 /*
  * ============================================================================
  * DERIVED CONSTANTS (computed from simulation parameters)

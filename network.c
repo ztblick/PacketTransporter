@@ -31,7 +31,7 @@ typedef struct network_buffer {
     // We want one bit per packet and a minimum of one "row" in our bitmap. So we add 63 to always
     // have at least one row without adding an extra row superfluously (e.g. 1 packet capacity = 1 ULONG64,
     // 63 packet capacity = 1 ULONG64, 127 packets = 2 ULONG64, 128 -> 2, 129 -> 3, etc.)
-    ULONG64 lock[(NETWORK_BUFFER_CAPACITY + 63) / 64];
+    volatile LONG64 lock[NETWORK_BITMAP_ROWS];
 
     // When this buffer's event is set, a thread waiting for
     // a packet is woken. This is a manual reset event, as
@@ -46,7 +46,7 @@ typedef struct network_buffer {
 void initialize_network_buffer(PNETWORK_BUFFER buffer) {
 
     memset(buffer->packets, 0, NETWORK_BUFFER_CAPACITY * sizeof(BUFFER_ENTRY));
-    memset(buffer->lock, 0, (NETWORK_BUFFER_CAPACITY + 63) / 64);
+    memset(buffer->lock, 0, NETWORK_BITMAP_ROWS * sizeof(ULONG64));
 
     buffer->packets_added_to_network = CreateEvent(
         NULL,                                   // Default security attributes
@@ -69,10 +69,10 @@ typedef struct nic_buffer {
 
     PACKET packets[NIC_BUFFER_CAPACITY];
     // Sending threads set reserve_slot to 1, write their packet, then set packet_ready to 1
-    ULONG64 reserve_slot_lock[(NIC_BUFFER_CAPACITY + 63) / 64];
+    volatile LONG64 reserve_slot_lock[NIC_BITMAP_ROWS];
     // NIC->network finds a 1 in packet_ready, writes its data to the network, then clears the
     // packet_ready bit and then the reserve_slot bit
-    ULONG64 packet_ready_lock[(NIC_BUFFER_CAPACITY + 63) / 64];
+    volatile LONG64 packet_ready_lock[NIC_BITMAP_ROWS];
 
     HANDLE packets_added_to_nic;
 
@@ -88,8 +88,8 @@ typedef struct nic_buffer {
 
 void initialize_nic_buffer(PNIC_BUFFER buffer) {
     memset(buffer->packets, 0, NIC_BUFFER_CAPACITY * sizeof(BUFFER_ENTRY));
-    memset(buffer->reserve_slot_lock, 0, (NIC_BUFFER_CAPACITY + 63) / 64);
-    memset(buffer->packet_ready_lock, 0, (NIC_BUFFER_CAPACITY + 63) / 64);
+    memset(buffer->reserve_slot_lock, 0, NIC_BITMAP_ROWS * sizeof(ULONG64));
+    memset(buffer->packet_ready_lock, 0, NIC_BITMAP_ROWS * sizeof(ULONG64));
 
     buffer->packets_added_to_nic = CreateEvent(
         NULL,                                   // Default security attributes
@@ -129,6 +129,76 @@ NETWORK_STATE RS_net;
 uint32_t packetStates[TOTAL_PACKETS_MULTITHREADED];
 #endif
 
+ULONG64 get_empty_network_slot(NETWORK_BUFFER n) {
+
+    ULONG64 slot = 0;
+    ULONG64 row = 0;
+    ULONG64 offset = 0;
+    ULONG64 mask = 0;
+
+    while (slot < NETWORK_BUFFER_CAPACITY) {
+        // Update our variables
+        row = slot / 64;
+        offset = slot % 64;
+        mask = (1ULL << offset);
+
+        // If this operation returns a nonzero value, then the bit is set. Move along to the next slot.
+        // If it returns 0, then the bit is cleared -- and we have found an empty slot!
+        // Doing this without an interlocked operation is okay because there are only two threads
+        // with access to the data, and the other thread (the wire to nic thread) only clears bits.
+        // It never sets them. So this 0 is a reliable value.
+        if (n.lock[row] & mask) return slot;
+
+        // Skip the whole row if it is all set
+        if (n.lock[row] == BITMAP_ROW_FULL_VALUE) {
+            slot = (row + 1) * 64;
+            continue;
+        }
+
+        slot++;
+    }
+
+    // If we cannot find an empty network slot, we would want to resize. But, for now, let's
+    // throw an error.
+    ASSERT(FALSE);
+    return -1;
+}
+
+LONG64 get_empty_nic_slot(PNIC_BUFFER n) {
+
+    LONG64 slot = 0;
+    LONG64 row = 0;
+    LONG64 offset = 0;
+    BOOL bit_value;
+
+    while (slot < NIC_BUFFER_CAPACITY) {
+        // Update our variables
+        row = slot / 64;
+        offset = slot % 64;
+
+        // If this operation returns a nonzero value, then the bit is set. Move along to the next slot.
+        // If it returns 0, then we need to be careful. Multiple user threads are here
+        // simultaneously, so we need to make sure we don't wipe our their changes. So,
+        // we can do an interlocked bit test and set. If the returned value is 1, then
+        // another thread beat us to the slot. If not, then we got there first and the slot is ours!
+        bit_value = InterlockedBitTestAndSet64(
+            &n->reserve_slot_lock[row],
+            offset);
+        // If the bit was NOT already set -- then the slot is ours!
+        if (!bit_value) return slot;
+
+        // Skip the whole row if it is all set
+        if (n->reserve_slot_lock[row] == BITMAP_ROW_FULL_VALUE) {
+            slot = (row + 1) * 64;
+            continue;
+        }
+
+        slot++;
+    }
+
+    // If we cannot find an empty NIC slot, return NO_NIC_SLOT_AVAILABLE
+    return NO_NIC_SLOT_AVAILABLE;
+}
 
 /*
  *  Manage transfers from the user's network card to the network. In this simulation, the network
@@ -146,11 +216,27 @@ uint32_t packetStates[TOTAL_PACKETS_MULTITHREADED];
  */
 void NIC_to_wire_thread(PNETWORK_STATE n) {
 
+    // Create references
+    PNIC_BUFFER nic = &n->outbound_NIC;
+
     // Create our handles for the wait for multiple objects call in the loop.
     // We wait to trim or to exit.
     HANDLE events[2];
-    events[ACTIVE_EVENT_INDEX] = n->inbound_NIC.packets_added_to_nic;
+    events[ACTIVE_EVENT_INDEX] = n->outbound_NIC.packets_added_to_nic;
     events[EXIT_EVENT_INDEX] = simulation_end;
+
+    // Create our helper variables
+    ULONG64 slot = 0;
+    ULONG64 row = 0;
+    ULONG64 offset = 0;
+    ULONG64 mask = 0;
+    ULONG64 network_buffer_slot = 0;
+    ULONG64 network_row = 0;
+    ULONG64 network_offset = 0;
+    BOOL net_bit;
+    BOOL nic_reserve_bit;
+    BOOL nic_ready_bit;
+    BOOL consecutive_misses = 0;
 
     // Wait for system start event before entering waiting state!
     WaitForSingleObject(simulation_begin, INFINITE);
@@ -163,28 +249,69 @@ void NIC_to_wire_thread(PNETWORK_STATE n) {
         if (WaitForMultipleObjects(ARRAYSIZE(events), events, FALSE, NIC_RETRY_MS)
             == EXIT_EVENT_INDEX) return;
 
-        /* For each slot in the NIC
+        while (consecutive_misses < MAX_NIC_MISSES_BEFORE_SLEEP) {
+            // Update our variables
+            row = slot / 64;
+            offset = slot % 64;
+            mask = (1ULL << offset);
 
-             if this slot is empty, move to next slot and continue
+            // Read in the relevant row of the bitmap
+            ULONG64 row_snapshot = nic->packet_ready_lock[row];
 
-             lock this slot using interlocked compare exchange. if failed, continue (stay on this slot!)
+            // If this slot is zero, then there is no packet in that slot. Continue to next slot.
+            if (row_snapshot & mask) {
+                slot++;
+                consecutive_misses++;
+                continue;
+            }
 
-             find slot in network buffer. (If none available, expand network buffer size or drop packet)
+            // If the NIC slot IS set, then we will find a slot in our network buffer to write to.
+            // We know the snapshot is valid because there is only ONE NIC-to-wire thread, and
+            // this thread is the ONLY thread with the ability to clear bits in the packets ready lock.
+            network_buffer_slot = get_empty_network_slot(n->network_buffer);
+            network_row = network_buffer_slot / 64;
+            network_offset = network_buffer_slot % 64;
 
-             timestamp the buffer slot for latency calculation
+            // TODO Wait for serialization delay
 
-             write packet to network buffer slot. Change lock in network buffer to 1 to alert next thread
+            // Now that we have a slot in the network, memcopy to it & timestamp for latency
+            memcpy(
+                &n->network_buffer.packets[network_buffer_slot].packet,
+                &n->outbound_NIC.packets[slot],
+                sizeof(PACKET)
+                );
+            n->network_buffer.packets[network_buffer_slot].time_available =
+                time_now_ms() + PROPAGATION_DELAY_MS;
 
-             wait for serialization delay
+            // Then, set the bit in the network bitmap lock
+            net_bit = InterlockedBitTestAndSet64(
+                &n->network_buffer.lock[network_row],
+                network_offset);
+            // The original value in the bitmap should be 0
+            ASSERT(!net_bit);
 
-             clear both slots in the NIC locks
+            // Finally, clear the bits in the NIC locks to allow the slot to be filled
+            nic_ready_bit = InterlockedBitTestAndReset64(
+                &nic->packet_ready_lock[row],
+                offset);
+            // Original value should be 1
+            ASSERT(nic_ready_bit);
 
-             move on to next slot
+            nic_reserve_bit = InterlockedBitTestAndReset64(
+                &nic->reserve_slot_lock[row],
+                offset);
+            // Original bit should be set
+            ASSERT(nic_reserve_bit);
 
-           If no packets found, reset NIC event and continue
-        */
+            // Note that we wrote out a packet -- indicating that we should keep looking for more
+            consecutive_misses = 0;
+            slot++;
+        }
+
+        // In this situation, there are no packets for us to write -- so we will reset this event
+        // and begin to wait.
+        ResetEvent(n->inbound_NIC.packets_added_to_nic);
     }
-
 }
 
 /*
@@ -297,7 +424,6 @@ void create_network_layer(void) {
  * Frees network layer resources.
  */
 void network_cleanup(void) {
-
     net_free(&SR_net);
     net_free(&RS_net);
 }
@@ -316,40 +442,37 @@ int send_packet(PPACKET pkt, int role) {
 
     // TODO: Apply network unreliability (drop, duplicate, corrupt, reorder)
 
-    // Select buffer based on role
-    PNETWORK_BUFFER buffer = &n.buffer_sender_to_receiver;
-    PCRITICAL_SECTION wire_lock = &n.wire_lock_push_sender_to_receiver;
-    if (role == ROLE_RECEIVER) {
-        buffer = &n.buffer_receiver_to_sender;
-        wire_lock = &n.wire_lock_push_receiver_to_sender;
-    }
+    // Select network based on role
+    PNETWORK_STATE n = &SR_net;
+    if (role == ROLE_RECEIVER) n = &RS_net;
 
-    // Lock wire
-    EnterCriticalSection(wire_lock);
+    // Create our stack variables
+    LONG64 nic_slot;
+    LONG64 offset;
+    LONG64 row;
+    BOOL ready_bit;
 
-    // TODO add a loop to spin, simulating synchronization delay
-    //  and add back the documentation about it, including relevant calculations
+    // Find an available NIC slot by checking reserve lock
+    nic_slot = get_empty_nic_slot(&n->outbound_NIC);
+    if (nic_slot == NO_NIC_SLOT_AVAILABLE) return PACKET_REJECTED;
+    row = nic_slot / 64;
+    offset = nic_slot % 64;
 
-    // Create new buffer entry based on this packet
-    BUFFER_ENTRY entry;
-    entry.time_available = time_now_ms() + PROPAGATION_DELAY_MS;
-    memcpy(&entry.packet, pkt, sizeof(PACKET));
+    // Write data to NIC buffer
+    memcpy(
+        pkt,
+        &n->outbound_NIC.packets[nic_slot],
+        sizeof(PACKET)
+        );
 
-    // If buffer full, return PACKET_REJECTED
-    if (buffer->size == NETWORK_BUFFER_CAPACITY) {
-        LeaveCriticalSection(wire_lock);
-        return PACKET_REJECTED;
-    }
+    // Set packet ready lock bit (interlocked compare exchange, again)
+    ready_bit = InterlockedBitTestAndSet64(
+        &n->outbound_NIC.packet_ready_lock[row],
+        offset);
+    // This bit must be zero before this operation
+    ASSERT(!ready_bit);
 
-    // Otherwise, push onto buffer
-    // This is safe, as no other producer can push at the same time,
-    // and the size will be incremented during the push.
-    push(buffer, &entry);
-
-    // Unlock the wire
-    LeaveCriticalSection(wire_lock);
-
-    return PACKET_ACCEPTED;  // Accepted
+    return PACKET_ACCEPTED;
 }
 
 
