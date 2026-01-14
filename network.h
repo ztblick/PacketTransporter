@@ -13,11 +13,6 @@
  *
  * This layer simulates realistic network behavior, including:
  *
- *   0. SERIALIZATION DELAY - Time to push bits onto the wire
- *   1. PROPAGATION DELAY  - Time for bits to travel across the network
- *   2. SHARED BANDWIDTH   - All connections compete for the same link
- *   3. FINITE BUFFERS     - Packets dropped when buffer is full
- *
  * SERIALIZATION DELAY
  * -------------------
  * A physical network link can only transmit one bit at a time. The time to
@@ -68,24 +63,6 @@
  * a real NIC. With 16 concurrent transmissions on a 100 Mbps link, each
  * effectively gets ~6.25 Mbps average throughput.
  *
- *
- * BUFFER SIZING
- * -------------
- * Each directional buffer holds up to NETWORK_BUFFER_CAPACITY packets. This is
- * sized to handle transient bursts (e.g., receiver thread descheduled for 50ms)
- * without dropping packets under normal operation.
- *
- * At 100 Mbps with 1 KB packets:
- *
- *   Max arrival rate = 100,000,000 bits/sec / 8,192 bits/packet = ~12,207 packets/sec
- *   Packets in 50 ms = 12,207 * 0.050 = ~610 packets
- *
- * Buffer capacity of 1024 packets provides ~84 ms of buffering at full rate,
- * which is sufficient headroom for well-behaved implementations.
- *
- * If the buffer fills (receiver falling behind), packets are dropped. This is
- * realistic network behavior and indicates a performance problem in student code.
- *
  * ============================================================================
  * ARCHITECTURE
  * ============================================================================
@@ -118,7 +95,7 @@
 
 #pragma once
 
-#include "data_structures.h"
+#include "utils.h"
 
 /*
  * ============================================================================
@@ -146,9 +123,11 @@
  */
 #define NETWORK_BUFFER_CAPACITY           KB(8)
 
-/* Size of the network card on either machine. This is in terms of PACKETS.
- */
+// Size of the network card on either machine. This is in terms of PACKETS.
 #define NIC_BUFFER_CAPACITY               256
+
+// The default timeout for a network helper thread, in milliseconds
+#define NIC_RETRY_MS                      10
 
 /*
  * ============================================================================

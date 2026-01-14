@@ -86,15 +86,35 @@ typedef struct nic_buffer {
  *  in the reserve_slot lock, then they know they have that packet. They transfer the data, then reset both bits to 0.
  */
 
+void initialize_nic_buffer(PNIC_BUFFER buffer) {
+    memset(buffer->packets, 0, NIC_BUFFER_CAPACITY * sizeof(BUFFER_ENTRY));
+    memset(buffer->reserve_slot_lock, 0, (NIC_BUFFER_CAPACITY + 63) / 64);
+    memset(buffer->packet_ready_lock, 0, (NIC_BUFFER_CAPACITY + 63) / 64);
+
+    buffer->packets_added_to_nic = CreateEvent(
+        NULL,                                   // Default security attributes
+        TRUE,                                   // Manual reset event!
+        FALSE,                                  // Initially the event is NOT set.
+        TEXT("PacketsAddedToNICEvent")          // Event name
+        );
+}
 
 /*
  *  Network state variable, encapsulating all information about the network.
  */
-typedef struct __network_state {
+typedef struct network_state {
     // Sender -> Receiver Network
     NIC_BUFFER outbound_NIC;
     NETWORK_BUFFER network_buffer;
     NIC_BUFFER inbound_NIC;
+
+    // Thread handles
+    HANDLE nic_to_wire_thread;
+    HANDLE wire_to_nic_thread;
+
+    // Thread IDs
+    ULONG nic_to_wire_ID;
+    ULONG wire_to_nic_ID;
 
     // State
     BOOL initialized;
@@ -105,74 +125,10 @@ typedef struct __network_state {
 NETWORK_STATE SR_net;
 NETWORK_STATE RS_net;
 
-// Timing variables
-LARGE_INTEGER perf_frequency;
-LARGE_INTEGER time_start;
-
 #if DEBUG
 uint32_t packetStates[TOTAL_PACKETS_MULTITHREADED];
 #endif
 
-/*
- * time_init
- *
- * Initializes the high-resolution timer. Call once at program start.
- */
-static void time_init(void) {
-    QueryPerformanceFrequency(&perf_frequency);
-    QueryPerformanceCounter(&time_start);
-}
-
-/*
- * time_now_ms
- *
- * Returns current time in milliseconds since time_init was called.
- */
-static uint64_t time_now_ms(void) {
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    return (uint64_t)((now.QuadPart - time_start.QuadPart) * 1000 / perf_frequency.QuadPart);
-}
-
-void net_init(PNETWORK_STATE n) {
-
-    initialize_network_buffer(&n->network_buffer);
-
-    // TODO Initialize NIC cards
-
-    n->initialized = TRUE;
-
-}
-
-/*
- * network_init
- *
- * Initializes the network layer buffers and synchronization primitives.
- */
-void create_network_layer(void) {
-
-    // Initialize networks
-    net_init(&SR_net);
-    net_init(&RS_net);
-
-    // Initialize timing
-    time_init();
-
-#if DEBUG
-    memset(packetStates, UNSENT, TOTAL_PACKETS_MULTITHREADED * sizeof(uint32_t));
-#endif
-}
-
-
-/*
- * network_cleanup
- *
- * Frees network layer resources.
- */
-void network_cleanup(void) {
-
-    // TODO free any events or other dynamically allocated data
-}
 
 /*
  *  Manage transfers from the user's network card to the network. In this simulation, the network
@@ -188,19 +144,47 @@ void network_cleanup(void) {
  *
  *  Parameter: struct giving the specific memory buffer and the NIC this thread manages.
  */
-void NIC_to_wire_thread(void) {
+void NIC_to_wire_thread(PNETWORK_STATE n) {
 
-    // wait for NIC event, exit event, or timeout:
-    //
-    //     scan NIC for available packets
-    //
-    //     if none found, reset NIC event and continue
-    //
-    //     write packet to network buffer (if none available, expand network buffer size)
-    //
-    //     wait for serialization delay
-    //
-    //     move on to next slot
+    // Create our handles for the wait for multiple objects call in the loop.
+    // We wait to trim or to exit.
+    HANDLE events[2];
+    events[ACTIVE_EVENT_INDEX] = n->inbound_NIC.packets_added_to_nic;
+    events[EXIT_EVENT_INDEX] = simulation_end;
+
+    // Wait for system start event before entering waiting state!
+    WaitForSingleObject(simulation_begin, INFINITE);
+
+    while (TRUE) {
+
+        // Wait for a signal -- we will run this thread after a certain amount of time has passed
+        // or after we receive the packets_added_to_NIC event.
+        // If we receive the exit simulation event, we immediately return.
+        if (WaitForMultipleObjects(ARRAYSIZE(events), events, FALSE, NIC_RETRY_MS)
+            == EXIT_EVENT_INDEX) return;
+
+        /* For each slot in the NIC
+
+             if this slot is empty, move to next slot and continue
+
+             lock this slot using interlocked compare exchange. if failed, continue (stay on this slot!)
+
+             find slot in network buffer. (If none available, expand network buffer size or drop packet)
+
+             timestamp the buffer slot for latency calculation
+
+             write packet to network buffer slot. Change lock in network buffer to 1 to alert next thread
+
+             wait for serialization delay
+
+             clear both slots in the NIC locks
+
+             move on to next slot
+
+           If no packets found, reset NIC event and continue
+        */
+    }
+
 }
 
 /*
@@ -212,7 +196,7 @@ void NIC_to_wire_thread(void) {
  *
  *  Parameter: struct giving the specific memory buffer and the NIC this thread manages.
  */
-void wire_to_NIC_thread(void) {
+void wire_to_NIC_thread(PNETWORK_STATE n) {
     // while (running) {
     //     earliest_eta = UINT64_MAX
     //     now = time_now_ms()
@@ -246,74 +230,76 @@ void wire_to_NIC_thread(void) {
 }
 
 
-/*
- *  Push the entry into the buffer.
- *  Memory must be copied into the buffer.
- *  Precondition: buffer and wire are locked, buffer has room for at least one packet.
+/*  Initialize all buffers for the given network.
  */
-void push(PNETWORK_BUFFER buffer, PBUFFER_ENTRY entry) {
+void net_init(PNETWORK_STATE n) {
 
-#if DEBUG
-    ASSERT(packetStates[entry->packet.transmission_id] == UNSENT);
-    ASSERT(entry->packet.packet_state == UNSENT);
+    initialize_nic_buffer(&n->inbound_NIC);
+    initialize_network_buffer(&n->network_buffer);
+    initialize_nic_buffer(&n->outbound_NIC);
 
-    entry->packet.packet_state = SENT;
-    packetStates[entry->packet.transmission_id] = SENT;
-#endif
+    // Create nic to wire and wire to nic threads
+    n->nic_to_wire_thread = CreateThread (
+            DEFAULT_SECURITY,
+            DEFAULT_STACK_SIZE,
+            NIC_to_wire_thread,
+            n,                                   // Network state pointer is passed as a parameter
+            DEFAULT_CREATION_FLAGS,
+            &n->nic_to_wire_ID
+            );
+    ASSERT(n->nic_to_wire_thread);
 
-    ASSERT(buffer->size < NETWORK_BUFFER_CAPACITY);
-    // Copy the data into the buffer
-    memcpy(buffer->packets + buffer->back, entry, sizeof(BUFFER_ENTRY));
+    n->wire_to_nic_thread = CreateThread (
+            DEFAULT_SECURITY,
+            DEFAULT_STACK_SIZE,
+            wire_to_NIC_thread,
+            n,                                   // Network state pointer is passed as a parameter
+            DEFAULT_CREATION_FLAGS,
+            &n->wire_to_nic_ID
+            );
+    ASSERT(n->nic_to_wire_thread);
 
-    // Advance queue tail
-    // The other thread does not modify back, so we will not have any race
-    // conditions on this value.
-    buffer->back = (buffer->back + 1) % NETWORK_BUFFER_CAPACITY;
+    n->initialized = TRUE;
+}
 
-    // Increment count
-    InterlockedIncrement16(&buffer->size);
+void net_free(PNETWORK_STATE n) {
+    // Wait for all threads to finish running
+    WaitForSingleObject(n->nic_to_wire_thread, INFINITE);
+    WaitForSingleObject(n->wire_to_nic_thread, INFINITE);
 
-    // Signal condition variable to wake up any waiting threads on the receiving end
-    SetEvent(buffer->packets_added_to_network);
+    // Free all data and clear all events associated with this network state
+    CloseHandle(n->outbound_NIC.packets_added_to_nic);
+    CloseHandle(n->network_buffer.packets_added_to_network);
+    CloseHandle(n->inbound_NIC.packets_added_to_nic);
 }
 
 /*
- *  Pop from the buffer.
- *  If this is the last entry, reset the packets available event.
- *  Precondition: wire and buffer locks acquired, buffer is NOT empty.
+ * create_network_layer
+ *
+ * Initializes the entire network layer: one network state for sender to receiver
+ * and one network state for receiver to sender.
  */
-int pop(PNETWORK_BUFFER buffer, PPACKET destPacket) {
+void create_network_layer(void) {
 
-    ASSERT(buffer->size > 0);
-
-    // Ensure that the arrival time of the packet is valid
-    PBUFFER_ENTRY frontEntry = buffer->packets + buffer->front;
-    if (frontEntry->time_available > time_now_ms()) return NO_PACKET_AVAILABLE;
+    // Initialize networks
+    net_init(&SR_net);
+    net_init(&RS_net);
 
 #if DEBUG
-    ASSERT(frontEntry->packet.packet_state == SENT);
-    ASSERT(packetStates[frontEntry->packet.transmission_id] == SENT);
-
-    frontEntry->packet.packet_state = RECEIVED;
-    packetStates[frontEntry->packet.transmission_id] = RECEIVED;
+    memset(packetStates, UNSENT, TOTAL_PACKETS_MULTITHREADED * sizeof(uint32_t));
 #endif
+}
 
-    // Otherwise, copy data into the packet
-    PPACKET frontPacket = &frontEntry->packet;
-    destPacket->length = frontPacket->length;
-    destPacket->transmission_id = frontPacket->transmission_id;
-    memcpy(destPacket->payload, frontPacket->payload, frontPacket->length);
 
-    // Advance the queue head
-    buffer->front = (buffer->front + 1) % NETWORK_BUFFER_CAPACITY;
+/*
+ * network_cleanup
+ *
+ * Frees network layer resources.
+ */
+void network_cleanup(void) {
 
-    // Decrement the size of the buffer
-    InterlockedDecrement16(&buffer->size);
-
-    // If this was the last packet available, reset the event
-    if (buffer->size == 0) ResetEvent(buffer->packets_added_to_network);
-
-    return PACKET_RECEIVED;
+    net_free(&SR_net);
+    net_free(&RS_net);
 }
 
 /*
