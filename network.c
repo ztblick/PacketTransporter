@@ -129,7 +129,7 @@ NETWORK_STATE RS_net;
 uint32_t packetStates[TOTAL_PACKETS_MULTITHREADED];
 #endif
 
-ULONG64 get_empty_network_slot(NETWORK_BUFFER n) {
+ULONG64 get_empty_network_slot(PNETWORK_BUFFER n) {
 
     ULONG64 slot = 0;
     ULONG64 row = 0;
@@ -147,10 +147,10 @@ ULONG64 get_empty_network_slot(NETWORK_BUFFER n) {
         // Doing this without an interlocked operation is okay because there are only two threads
         // with access to the data, and the other thread (the wire to nic thread) only clears bits.
         // It never sets them. So this 0 is a reliable value.
-        if (n.lock[row] & mask) return slot;
+        if (n->lock[row] & mask) return slot;
 
         // Skip the whole row if it is all set
-        if (n.lock[row] == BITMAP_ROW_FULL_VALUE) {
+        if (n->lock[row] == BITMAP_ROW_FULL_VALUE) {
             slot = (row + 1) * 64;
             continue;
         }
@@ -218,11 +218,12 @@ void NIC_to_wire_thread(PNETWORK_STATE n) {
 
     // Create references
     PNIC_BUFFER nic = &n->outbound_NIC;
+    PNETWORK_BUFFER buffer = &n->network_buffer;
 
     // Create our handles for the wait for multiple objects call in the loop.
     // We wait to trim or to exit.
     HANDLE events[2];
-    events[ACTIVE_EVENT_INDEX] = n->outbound_NIC.packets_added_to_nic;
+    events[ACTIVE_EVENT_INDEX] = nic->packets_added_to_nic;
     events[EXIT_EVENT_INDEX] = simulation_end;
 
     // Create our helper variables
@@ -246,7 +247,7 @@ void NIC_to_wire_thread(PNETWORK_STATE n) {
         // Wait for a signal -- we will run this thread after a certain amount of time has passed
         // or after we receive the packets_added_to_NIC event.
         // If we receive the exit simulation event, we immediately return.
-        if (WaitForMultipleObjects(ARRAYSIZE(events), events, FALSE, NIC_RETRY_MS)
+        if (WaitForMultipleObjects(ARRAYSIZE(events), events, FALSE, NET_RETRY_MS)
             == EXIT_EVENT_INDEX) return;
 
         while (consecutive_misses < MAX_NIC_MISSES_BEFORE_SLEEP) {
@@ -268,7 +269,7 @@ void NIC_to_wire_thread(PNETWORK_STATE n) {
             // If the NIC slot IS set, then we will find a slot in our network buffer to write to.
             // We know the snapshot is valid because there is only ONE NIC-to-wire thread, and
             // this thread is the ONLY thread with the ability to clear bits in the packets ready lock.
-            network_buffer_slot = get_empty_network_slot(n->network_buffer);
+            network_buffer_slot = get_empty_network_slot(buffer);
             network_row = network_buffer_slot / 64;
             network_offset = network_buffer_slot % 64;
 
@@ -276,16 +277,16 @@ void NIC_to_wire_thread(PNETWORK_STATE n) {
 
             // Now that we have a slot in the network, memcopy to it & timestamp for latency
             memcpy(
-                &n->network_buffer.packets[network_buffer_slot].packet,
-                &n->outbound_NIC.packets[slot],
+                &buffer->packets[network_buffer_slot].packet,
+                &nic->packets[slot],
                 sizeof(PACKET)
                 );
-            n->network_buffer.packets[network_buffer_slot].time_available =
+            buffer->packets[network_buffer_slot].time_available =
                 time_now_ms() + PROPAGATION_DELAY_MS;
 
             // Then, set the bit in the network bitmap lock
             net_bit = InterlockedBitTestAndSet64(
-                &n->network_buffer.lock[network_row],
+                &buffer->lock[network_row],
                 network_offset);
             // The original value in the bitmap should be 0
             ASSERT(!net_bit);
@@ -310,7 +311,7 @@ void NIC_to_wire_thread(PNETWORK_STATE n) {
 
         // In this situation, there are no packets for us to write -- so we will reset this event
         // and begin to wait.
-        ResetEvent(n->inbound_NIC.packets_added_to_nic);
+        ResetEvent(nic->packets_added_to_nic);
     }
 }
 
@@ -324,36 +325,108 @@ void NIC_to_wire_thread(PNETWORK_STATE n) {
  *  Parameter: struct giving the specific memory buffer and the NIC this thread manages.
  */
 void wire_to_NIC_thread(PNETWORK_STATE n) {
-    // while (running) {
-    //     earliest_eta = UINT64_MAX
-    //     now = time_now_ms()
-    //
-    //     // Scan network buffer, process arrived packets
-    //     for each packet in network_buffer:
-    //         if packet.arrival_time <= now:
-    //             move_to_receiver_buffer(packet)
-    //             remove_from_network_buffer(packet)
-    //         else:
-    //             if packet.arrival_time < earliest_eta:
-    //                 earliest_eta = packet.arrival_time
-    //
-    //     // Recheck time (processing took some time)
-    //     now = time_now_ms()
-    //
-    //     if earliest_eta <= now:
-    //         // More work to do, loop immediately
-    //         continue
-    //
-    //     if earliest_eta == UINT64_MAX:
-    //         // Buffer empty, sleep until signaled that packet was added
-    //         wait_for_signal(packet_added_event, INFINITE)
-    //     else:
-    //         // Sleep until next arrival
-    //         sleep_duration = earliest_eta - now
-    //         wait_for_signal(packet_added_event, sleep_duration)
-    //
-    //     // Either timer expired or new packet arrived - loop and scan again
-    // }
+
+    // Create references
+    PNIC_BUFFER nic = &n->inbound_NIC;
+    PNETWORK_BUFFER buffer = &n->network_buffer;
+
+    // Create our handles for the wait for multiple objects call in the loop.
+    // We wait to trim or to exit.
+    HANDLE events[2];
+    events[ACTIVE_EVENT_INDEX] = buffer->packets_added_to_network;
+    events[EXIT_EVENT_INDEX] = simulation_end;
+
+    // Create our helper variables
+    ULONG64 earliest_eta = 0;
+    ULONG64 time_now = 0;
+    LONG64 slot = 0;
+    LONG64 row = 0;
+    LONG64 offset = 0;
+    LONG64 mask = 0;
+    PBUFFER_ENTRY entry;
+    ULONG64 entry_eta;
+    ULONG64 time_to_next_wakeup = 0;
+    ULONG64 network_buffer_slot = 0;
+    ULONG64 network_row = 0;
+    ULONG64 network_offset = 0;
+    BOOL net_bit;
+    BOOL nic_reserve_bit;
+    BOOL nic_ready_bit;
+    BOOL consecutive_misses = 0;
+
+    // Wait for system start event before entering waiting state!
+    WaitForSingleObject(simulation_begin, INFINITE);
+
+    while (TRUE) {
+
+        // Reset our variables
+        earliest_eta = UINT64_MAX;
+
+        // Scan network buffer, process arrived packets
+        while (slot < NETWORK_BUFFER_CAPACITY) {
+
+            // Update variables
+            row = slot / 64;
+            offset = slot % 64;
+            mask = (1LL << offset);
+
+            // Check this slot. If it is zero (false) then we move on to the next slot.
+            if (!(buffer->lock[row] & mask)) {
+                slot++;
+                continue;
+            }
+
+            // Since this slot is set, there is a packet waiting. First, let's check its eta
+            entry = &buffer->packets[slot];
+            entry_eta = entry->time_available;
+
+            // If this packet is unavailable, we will save its eta and move on to the next one
+            if (entry_eta > time_now_ms()) {
+                if (entry_eta > earliest_eta) earliest_eta = entry_eta;
+                slot++;
+                continue;
+            }
+
+            // We know the packet is ready to be moved to the receiving NIC!
+
+            // First, find a slot in the NIC
+            // If none are available, drop the packet
+
+            // Otherwise, copy the data over
+
+            // Then, alert the receive_packet threads by setting the lock bit and
+            // (if necessary) setting the event.
+
+            // Finally, clear the slot in the network buffer
+            net_bit = InterlockedBitTestAndReset64(
+                &buffer->lock[row],
+                offset);
+            ASSERT(net_bit);
+        }
+
+        // If there is a packet that has become available since our search began,
+        // let's loop back and get it!
+        if (earliest_eta <= time_now_ms()) continue;
+
+        // We will need to sleep some amount of time. Let's calculate it. First,
+        // assume we sleep the maximum amount of time:
+        time_to_next_wakeup = NET_RETRY_MS;
+
+        // If no packets were found, we should reset the packets available event
+        if (earliest_eta == UINT64_MAX) ResetEvent(n->network_buffer.packets_added_to_network);
+
+        // If there are packets waiting, sleep until the next one is ready!
+        else time_to_next_wakeup = earliest_eta - time_now_ms();
+
+        // Wait for a signal -- we will run this thread after our timeout has expired
+        // OR after we receive the packets_added_to_network event.
+        // If we receive the exit simulation event, we immediately return.
+        if (WaitForMultipleObjects(
+            ARRAYSIZE(events),
+            events,
+            FALSE,
+            time_to_next_wakeup)    == EXIT_EVENT_INDEX) return;
+    }
 }
 
 
