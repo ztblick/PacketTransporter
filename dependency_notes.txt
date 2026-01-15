@@ -14,8 +14,8 @@ network.h               Contains functions headers and error codes
     |                   for the network functions.
     |
     V
-data_structures.h       Contains packet struct
-    |
+utils.h                 Contains packet struct
+    |                   Contains timing functions and zero_malloc
     |
     V
 config.h                Contains settings for the project, such as
