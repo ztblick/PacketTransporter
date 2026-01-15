@@ -380,31 +380,27 @@ int main(void) {
     printf("Network Layer Test Suite\n");
     printf("========================\n");
 
-    /* Initialize network layer */
-    printf("\nAll data for network layer test...\n");
-
-    initialize_layers_and_all_data();
-
     int pass_count = 0;
     int total_tests = 2;
 
-    /* Run tests */
+    // Single Threaded Test
+    initialize_layers_and_all_data();
     if (test_single_threaded()) {
         pass_count++;
     }
-
     free_all_data_and_shut_down();
 
-
+    // Multithreaded test
+    initialize_layers_and_all_data();
     if (test_multi_threaded()) {
         pass_count++;
     }
 
-    /* Cleanup */
+    // Cleanup
     printf("\nCleaning up network layer...\n");
     network_cleanup();
 
-    /* Final summary */
+    // Final summary
     printf("\n");
     printf("==================================================\n");
     printf("SUMMARY: %d of %d tests passed\n", pass_count, total_tests);

@@ -56,18 +56,6 @@
 #include "config.h"
 
 /*
- * time_now_ms
- *
- * Returns current time in milliseconds.
- * Uses QueryPerformanceCounter for high-resolution timing.
- */
-ULONG64 time_now_ms(VOID) {
-    // TODO: Implement using QueryPerformanceCounter
-    return 0;
-}
-
-
-/*
  * sender_thread
  *
  * Thread function for sending a single transmission.
