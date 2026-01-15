@@ -131,7 +131,7 @@
 #define BITMAP_ROW_FULL_VALUE             ((LONG64) -1)
 
 // The default timeout for a network helper thread, in milliseconds
-#define NET_RETRY_MS                      10
+#define NET_RETRY_MS                      5
 #define MAX_NIC_MISSES_BEFORE_SLEEP       NIC_BUFFER_CAPACITY
 
 #define NO_NIC_SLOT_AVAILABLE             -1

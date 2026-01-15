@@ -66,8 +66,9 @@ static int validate_packet_pattern(PPACKET pkt) {
     for (uint32_t i = 0; i < pkt->length; i++) {
         uint8_t expected = (uint8_t)(packet_id);
         if (pkt->payload[i] != expected) {
-            printf("  CORRUPTION: packet %u, byte %u: expected %u, got %u\n",
+            printf("  CORRUPTION: packet %x, byte %x: expected %x, got %x\n",
                    packet_id, i, expected, pkt->payload[i]);
+            ASSERT(FALSE);
             return 0;
         }
     }
@@ -100,7 +101,7 @@ static int test_single_threaded(void) {
     /* Send all packets */
     printf("Sending packets...\n");
     for (int i = 0; i < NUM_PACKETS_SINGLE_THREADED; i++) {
-        uint32_t length = (i % MAX_PAYLOAD_SIZE) + 1;  /* Vary packet sizes */
+        uint32_t length = MAX_PAYLOAD_SIZE;
         fill_packet_with_pattern(&send_pkt, (uint32_t)i, length);
 
         int result = send_packet(&send_pkt, ROLE_SENDER);
@@ -207,9 +208,7 @@ static DWORD WINAPI receiver_thread_func(LPVOID param) {
 
             /* Validate packet */
             int valid = validate_packet_pattern(&pkt);
-            if (valid) {
-                InterlockedIncrement(&g_packets_validated);
-            }
+            if (valid) InterlockedIncrement(&g_packets_validated);
 
             /* Mark packet as received (for duplicate detection) */
             uint32_t packet_id = pkt.transmission_id;
@@ -224,7 +223,8 @@ static DWORD WINAPI receiver_thread_func(LPVOID param) {
                 printf("  Receiver %d: UNEXPECTED packet ID %u\n", thread_index, packet_id);
             }
         }
-        /* On timeout, loop continues and checks if we're done */
+        // On timeout, break out of loop
+        else break;
     }
 
     return 0;
@@ -398,7 +398,7 @@ int main(void) {
 
     // Cleanup
     printf("\nCleaning up network layer...\n");
-    network_cleanup();
+    free_all_data_and_shut_down();
 
     // Final summary
     printf("\n");

@@ -6,6 +6,8 @@
 
 #include "network.h"
 
+#include <stdio.h>
+
 /*
  * Buffer entry objects - include packet and available time
  */
@@ -287,8 +289,8 @@ LONG64 find_filled_nic_slot(PNIC_BUFFER n) {
 
         // Otherwise, we will try to grab this slot! Another thread might beat us,
         // so we will check the return value of the atomic bit reset.
-        bit_value = InterlockedBitTestAndSet64(
-                &n->reserve_slot_lock[row],
+        bit_value = InterlockedBitTestAndReset64(
+                &n->packet_ready_lock[row],
                 offset);
 
         // If the original bit was set, then we won the race for the slot!
@@ -352,6 +354,7 @@ void NIC_to_wire_thread(PNETWORK_STATE n) {
         if (WaitForMultipleObjects(ARRAYSIZE(events), events, FALSE, NET_RETRY_MS)
             == EXIT_EVENT_INDEX) return;
 
+        consecutive_misses = 0;
         while (consecutive_misses < MAX_NIC_MISSES_BEFORE_SLEEP) {
             // Update our variables
             slot = slot % NIC_BUFFER_CAPACITY;
@@ -464,7 +467,7 @@ void wire_to_NIC_thread(PNETWORK_STATE n) {
         earliest_eta = UINT64_MAX;
 
         // Scan network buffer, process arrived packets
-        while (slot < NETWORK_BUFFER_CAPACITY) {
+        for (slot = 0; slot < NETWORK_BUFFER_CAPACITY; slot++) {
 
             // Update variables
             row = slot / 64;
@@ -472,10 +475,7 @@ void wire_to_NIC_thread(PNETWORK_STATE n) {
             mask = (1LL << offset);
 
             // Check this slot. If it is zero (false) then we move on to the next slot.
-            if (!(buffer->lock[row] & mask)) {
-                slot++;
-                continue;
-            }
+            if (!(buffer->lock[row] & mask)) continue;
 
             // Since this slot is set, there is a packet waiting. First, let's check its eta
             entry = &buffer->packets[slot];
@@ -484,7 +484,6 @@ void wire_to_NIC_thread(PNETWORK_STATE n) {
             // If this packet is unavailable, we will save its eta and move on to the next one
             if (entry_eta > time_now_ms()) {
                 if (entry_eta > earliest_eta) earliest_eta = entry_eta;
-                slot++;
                 continue;
             }
 
@@ -500,14 +499,18 @@ void wire_to_NIC_thread(PNETWORK_STATE n) {
                     &buffer->lock[row],
                     offset);
                 ASSERT(net_bit);
-                slot++;
+#if DEBUG
+                printf("Inbound NIC full -- dropping packet %d\n", entry->packet.transmission_id);
+#endif
+
+
                 continue;
             }
 
             // We have a slot, so let's copy the data over
             memcpy(
-                &entry->packet,
                 &nic->packets[nic_slot],
+                &entry->packet,
                 sizeof(PACKET)
                 );
 
@@ -525,6 +528,8 @@ void wire_to_NIC_thread(PNETWORK_STATE n) {
                 &buffer->lock[row],
                 offset);
             ASSERT(net_bit);
+
+            // Now that we're done with that slot -- move on to the next!
         }
 
         // If there is a packet that has become available since our search began,
@@ -657,8 +662,8 @@ int send_packet(PPACKET pkt, int role) {
 
     // Write data to NIC buffer
     memcpy(
-        pkt,
         &nic->packets[nic_slot],
+        pkt,
         sizeof(PACKET)
         );
 
@@ -693,7 +698,7 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
     // Determine which network state you are in
     PNETWORK_STATE n = &SR_net;
     if (role == ROLE_SENDER) n = &RS_net;
-    PNIC_BUFFER nic = &n->outbound_NIC;
+    PNIC_BUFFER nic = &n->inbound_NIC;
 
     // Create our stack variables
     LONG64 nic_slot = 0;
@@ -713,8 +718,8 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
 
             // Copy the data to the given packet pointer
             memcpy(
-                &nic->packets[nic_slot],
                 pkt,
+                &nic->packets[nic_slot],
                 sizeof(PACKET)
                 );
 
@@ -728,10 +733,10 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
 
         // If no packets are available, we will wait for one.
         ResetEvent(nic->packets_added_to_nic);
-        WaitForSingleObject(nic->packets_added_to_nic, timeout_ms);
+        WaitForSingleObject(nic->packets_added_to_nic, NET_RETRY_MS);
 
         // Check for a timeout
-        if (time_now_ms() > deadline) return PACKET_REJECTED;
+        if (time_now_ms() > deadline) return NO_PACKET_AVAILABLE;
 
         // If we don't have a timeout, then we will scan the NIC again!
     }
