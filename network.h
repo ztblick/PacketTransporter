@@ -117,9 +117,14 @@
  */
 #define LATENCY_MS                        20
 
-/* Maximum packets each directional buffer can hold.
- * Sized for ~84 ms of buffering at full bandwidth.
- * Packets are dropped when buffer is full.
+/* One-way propagation delay in milliseconds */
+#define PROPAGATION_DELAY_MS             (LATENCY_MS / 2)
+
+/* Bandwidth-delay product in bytes (how much data can be "in flight") */
+#define BANDWIDTH_DELAY_PRODUCT_BYTES    ((BANDWIDTH_BPS / 8) * LATENCY_MS / 1000)
+
+/* Maximum packets each metwork buffer can hold.
+ * Packets are dropped when buffer is full (which should not happpen).
  */
 #define NETWORK_BUFFER_CAPACITY           KB(8)
 #define NETWORK_BITMAP_ROWS               ((NETWORK_BUFFER_CAPACITY + 63) / 64)
@@ -135,26 +140,13 @@
 #define MAX_NIC_MISSES_BEFORE_SLEEP       NIC_BUFFER_CAPACITY
 
 #define NO_NIC_SLOT_AVAILABLE             -1
-/*
- * ============================================================================
- * DERIVED CONSTANTS (computed from simulation parameters)
- * ============================================================================
- */
 
-/* One-way propagation delay in milliseconds */
-#define PROPAGATION_DELAY_MS             (LATENCY_MS / 2)
-
-/* Bandwidth-delay product in bytes (how much data can be "in flight") */
-#define BANDWIDTH_DELAY_PRODUCT_BYTES    ((BANDWIDTH_BPS / 8) * LATENCY_MS / 1000)
-
-/*
- * ============================================================================
+/* ============================================================================
  * FUNCTIONS
- * ============================================================================
- */
+ * ============================================================================*/
 
 /*
- * network_init
+ * create_network_layer
  *
  * Initializes the network layer. Must be called before any other network functions.
  *
@@ -170,8 +162,7 @@ void create_network_layer(void);
  */
 void network_cleanup(void);
 
-#define PACKET_ACCEPTED  0
-#define PACKET_REJECTED  1
+
 /*
  * send_packet
  *
@@ -185,10 +176,10 @@ void network_cleanup(void);
  *   PACKET_ACCEPTED
  *   PACKET_REJECTED   invalid length, NULL pointer, or invalid role
  */
+#define PACKET_ACCEPTED  0
+#define PACKET_REJECTED  1
 int send_packet(PPACKET pkt, int role);
 
-#define PACKET_RECEIVED         0
-#define NO_PACKET_AVAILABLE     1
 /*
  * receive_packet
  *
@@ -203,6 +194,8 @@ int send_packet(PPACKET pkt, int role);
  *   PACKET_RECEIVED         - Packet received successfully
  *   NO_PACKET_AVAILABLE     - Timeout (no packet arrived within timeout_ms)
  */
+#define PACKET_RECEIVED         0
+#define NO_PACKET_AVAILABLE     1
 int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role);
 
 /*

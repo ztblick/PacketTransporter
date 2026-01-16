@@ -6,8 +6,6 @@
 
 #include "network.h"
 
-#include <stdio.h>
-
 /*
  * Buffer entry objects - include packet and available time
  */
