@@ -22,16 +22,13 @@ the system, NOT the architecture of the code powering the simulation.
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Here's the new design for the network layer:
+After implementing a new design, I see huge improvement in my performance
+trace! There is no evidence of contention now. The packets are moving
+very fast. The primary limitation at this point in time is the capacity
+of the NIC on the receiving end -- it seems that the NIC always is filled
+too fast for the receiving thread to pull out all the packets. But that's okay --
+I am sure we can expand the buffer size or improve how the students call receive_pkt.
 
-wait for NIC event, exit event, or timeout:
-
-    scan NIC for available packets
-
-    if none found, reset NIC event and continue
-
-    write packet to network buffer (if none available, expand network buffer size)
-
-    wait for serialization delay
-
-    move on to next slot
+One thing of note: the trace does show that the wire to NIC thread can
+improve. It seems to wait too long in between runs. I wonder if it is scanning
+through network space inefficiently? Perhaps we can skip 64 slots at a time!
