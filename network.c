@@ -474,6 +474,12 @@ void wire_to_NIC_thread(PNETWORK_STATE n) {
             offset = slot % 64;
             mask = (1LL << offset);
 
+            // Check this row. If it is all zeros, move on to the next one.
+            if (buffer->lock[row] == 0) {
+                slot = (row + 1) * 64 - 1;
+                continue;
+            }
+
             // Check this slot. If it is zero (false) then we move on to the next slot.
             if (!(buffer->lock[row] & mask)) continue;
 
