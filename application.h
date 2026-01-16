@@ -12,6 +12,14 @@
 
 #include "network.h"
 
+#define DEFAULT_THREAD_COUNT            1
+#define MIN_THREAD_COUNT                1
+#define MAX_THREAD_COUNT                64
+
+#define DEFAULT_TRANSMISSION_LIMIT_KB   128
+#define MIN_TRANSMISSION_LIMIT_KB       1
+#define MAX_TRANSMISSION_LIMIT_KB       (1024 * 1024)
+
 /*
  * Transmission record - tracks a sent transmission for later validation
  */

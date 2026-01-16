@@ -12,6 +12,20 @@
 #include "network.h"
 
 /*
+ *  create_transport_layer
+ *
+ *  Allocates all necessary data for the transport layer.
+ */
+void create_transport_layer(void);
+
+/*
+ *  free_transport_layer
+ *
+ *  Frees all memory allocated by the transport layer.
+ */
+void free_transport_layer(void);
+
+/*
  * send_transmission
  *
  * Reliably sends data to the receiver.

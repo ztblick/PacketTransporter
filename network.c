@@ -624,7 +624,7 @@ void create_network_layer(void) {
  *
  * Frees network layer resources.
  */
-void network_cleanup(void) {
+void free_network_layer(void) {
     net_free(&SR_net);
     net_free(&RS_net);
 }
