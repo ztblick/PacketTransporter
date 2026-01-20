@@ -160,7 +160,7 @@ void create_network_layer(void);
  *
  * Cleans up network layer resources. Call when done.
  */
-void network_cleanup(void);
+void free_network_layer(void);
 
 
 /*

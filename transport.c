@@ -9,26 +9,24 @@
 
 #include "transport.h"
 
-/*
- * send_transmission
- *
- * Students will implement reliable data transfer here.
- */
+void create_transport_layer(void) {
+    return;
+}
+
+void free_transport_layer(void) {
+    return;
+}
+
 int send_transmission(uint32_t transmission_id, void* data, size_t length) {
 
     // TODO: Student implementation
     // - Break data into packets tagged with transmission_id
     // - Send packets via send_packet()
     
-    return 0;
+    return TRANSMISSION_ACCEPTED;
 }
 
 
-/*
- * receive_transmission 
- *
- * Students will implement packet reassembly here.
- */
 int receive_transmission(uint32_t* out_id, void* dest, size_t* out_length, int timeout_ms) {
 
     // TODO: Student implementation
@@ -36,5 +34,5 @@ int receive_transmission(uint32_t* out_id, void* dest, size_t* out_length, int t
     // - Reassemble packets into complete transmissions
     // - When complete, fill in out_id, dest, out_length and return 1
 
-    return 0;
+    return NO_TRANSMISSION_AVAILABLE;
 }

@@ -87,7 +87,7 @@ typedef struct nic_buffer {
  */
 
 void initialize_nic_buffer(PNIC_BUFFER buffer) {
-    memset(buffer->packets, 0, NIC_BUFFER_CAPACITY * sizeof(BUFFER_ENTRY));
+    memset(buffer->packets, 0, NIC_BUFFER_CAPACITY * sizeof(PACKET));
     memset((void*)buffer->reserve_slot_lock, 0, NIC_BITMAP_ROWS * sizeof(LONG64));
     memset((void*)buffer->packet_ready_lock, 0, NIC_BITMAP_ROWS * sizeof(LONG64));
 
@@ -124,10 +124,6 @@ typedef struct network_state {
 // Our state objects, keeping track of all relevant information for our two networks!
 NETWORK_STATE SR_net;
 NETWORK_STATE RS_net;
-
-#if DEBUG
-uint32_t packetStates[TOTAL_PACKETS_MULTITHREADED];
-#endif
 
 ULONG64 get_empty_network_slot(PNETWORK_BUFFER n) {
 
@@ -616,10 +612,6 @@ void create_network_layer(void) {
     // Initialize networks
     net_init(&SR_net);
     net_init(&RS_net);
-
-#if DEBUG
-    memset(packetStates, UNSENT, TOTAL_PACKETS_MULTITHREADED * sizeof(uint32_t));
-#endif
 }
 
 
@@ -628,7 +620,7 @@ void create_network_layer(void) {
  *
  * Frees network layer resources.
  */
-void network_cleanup(void) {
+void free_network_layer(void) {
     net_free(&SR_net);
     net_free(&RS_net);
 }
