@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 #include "debug.h"
 
 // Conversions

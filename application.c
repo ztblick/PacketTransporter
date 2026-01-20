@@ -48,22 +48,55 @@
 
 #include "application.h"
 
-#include <stdio.h>
+// Our global variables:
+APP_STATE app;
 
-#include "transport.h"
 
-ULONG64 sending_thread_count = DEFAULT_THREAD_COUNT;
-ULONG64 receiving_thread_count = DEFAULT_THREAD_COUNT;
-ULONG64 max_transmission_limit = DEFAULT_TRANSMISSION_LIMIT_KB;
+void initialize_app_state(void) {
+    app.sending_thread_count = DEFAULT_THREAD_COUNT;
+    app.receiving_thread_count = DEFAULT_THREAD_COUNT;
+    app.max_transmission_limit_KB = DEFAULT_TRANSMISSION_LIMIT_KB;
+    app.transmission_count = DEFAULT_TRANSMISSION_COUNT;
+
+    app.transmissions_sent = 0;
+    app.transmissions_received = 0;
+
+    memset(&app.lock_sent, 0, sizeof(ULONG64) * TRANSMISSION_LOCK_ROWS);
+    memset(&app.lock_received, 0, sizeof(ULONG64) * TRANSMISSION_LOCK_ROWS);
+    memset(&app.transmission_info, 0, sizeof(TRANSMISSION_INFO) * MAX_TRANSMISSION_COUNT);
+}
 
 /*
  * sender_thread
  *
- * Thread function for sending a single transmission.
- * Records start time, calls send_transmission, reports failures.
+ * This thread continuously sends transmissions until there are none left to send.
  */
-int sender_thread(PVOID transmission_info) {
-    // TODO: Implement
+// TODO implement delays between transmissions
+int app_sender(void) {
+
+    // Wait for system start event before entering waiting state!
+    WaitForSingleObject(simulation_begin, INFINITE);
+
+    // This comparison is not interlocked, which is okay --
+    // we don't mind going around an extra time if necessary.
+    while (app.transmissions_sent < app.transmission_count) {
+
+        // Check the lock -- if it's totally 1s, move on to the next row
+
+        // Check this bit -- if it's 1, move on to the next bit
+
+        // Interlocked set it -- if you did not win, move on to the next bit
+
+        // You won! Congrats. Now it is your job to send THIS transmission
+
+        // Timestamp it
+
+        // Once you have sent it, update its status to SENT
+
+        // Interlocked increment app.transmissions_sent
+
+    }
+
     return 0;
 }
 
@@ -76,7 +109,7 @@ int sender_thread(PVOID transmission_info) {
  * are received or max_total_timeout_ms is exceeded.
  * For each received transmission, validates against sent records.
  */
-int receiver_thread(VOID) {
+int app_receiver(VOID) {
     // TODO: Implement
     return 0;
 }
@@ -93,233 +126,32 @@ static void* generate_test_data(size_t length) {
     return NULL;
 }
 
-
-/*
- * run_test
- *
- * Runs a complete test with n transmissions.
- *
- * Steps:
- *   1. Initialize stats
- *   2. Allocate and populate transmission records with test data
- *   3. Start receiver thread
- *   4. Start n sender threads
- *   5. Wait for all threads to complete
- *   6. Compute performance metrics (throughput, latency)
- *   7. Cleanup
- */
-int run_test(int num_transmissions, struct test_stats* stats) {
-    // TODO: Implement
-    return 0;
-}
-
-static void fill_packet_with_pattern(PPACKET pkt, uint32_t packet_id, uint32_t length) {
-    pkt->transmission_id = packet_id;
-    pkt->length = length;
-#if DEBUG
-    pkt->packet_state = UNSENT;
-#endif
-
-    for (uint32_t i = 0; i < length; i++) {
-        /* Pattern: each byte is (packet_id + byte_index) mod 256 */
-        pkt->payload[i] = (uint8_t) packet_id;
-    }
-}
-
-static int validate_packet_pattern(PPACKET pkt) {
-    uint32_t packet_id = pkt->transmission_id;
-
-    for (uint32_t i = 0; i < pkt->length; i++) {
-        uint8_t expected = (uint8_t)(packet_id);
-        if (pkt->payload[i] != expected) {
-            printf("  CORRUPTION: packet %x, byte %x: expected %x, got %x\n",
-                   packet_id, i, expected, pkt->payload[i]);
-            ASSERT(FALSE);
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
-/* Shared state for tracking received packets */
-static CRITICAL_SECTION g_received_lock;
-static int g_received_flags[TOTAL_PACKETS_MULTITHREADED];  /* 1 = received and valid */
-static volatile LONG g_packets_received = 0;
-static volatile LONG g_packets_validated = 0;
-
-/*
- * sender_thread_func
- *
- * Each sender sends PACKETS_PER_SENDER packets with unique IDs.
- * Packet IDs are assigned based on thread index to avoid collisions.
- */
-static DWORD WINAPI sender_thread_func(LPVOID param) {
-    int thread_index = (int)(intptr_t)param;
-    PACKET pkt;
-
-    /* Calculate packet ID range for this thread */
-    int start_id = thread_index * PACKETS_PER_SENDER;
-
-    for (int i = 0; i < PACKETS_PER_SENDER; i++) {
-
-        uint32_t packet_id = (uint32_t)(start_id + i);
-
-        fill_packet_with_pattern(&pkt, packet_id, MAX_PAYLOAD_SIZE);
-
-        int result = send_packet(&pkt, ROLE_SENDER);
-        if (result != PACKET_ACCEPTED) {
-            printf("  Sender %d: FAILED to send packet %u\n", thread_index, packet_id);
-        }
-    }
-
-    return 0;
-}
-
-/*
- * receiver_thread_func
- *
- * Receives packets until all expected packets have been received.
- * Multiple receiver threads compete to receive packets.
- */
-static DWORD WINAPI receiver_thread_func(LPVOID param) {
-    int thread_index = (int)(intptr_t)param;
-    PACKET pkt;
-
-    while (g_packets_received < TOTAL_PACKETS_MULTITHREADED) {
-        int result = receive_packet(&pkt, PACKET_WAIT_TIME_MS, ROLE_RECEIVER);
-
-        if (result == PACKET_RECEIVED) {
-            InterlockedIncrement(&g_packets_received);
-
-            /* Validate packet */
-            int valid = validate_packet_pattern(&pkt);
-            if (valid) InterlockedIncrement(&g_packets_validated);
-
-            /* Mark packet as received (for duplicate detection) */
-            uint32_t packet_id = pkt.transmission_id;
-            if (packet_id < TOTAL_PACKETS_MULTITHREADED) {
-                EnterCriticalSection(&g_received_lock);
-                if (g_received_flags[packet_id]) {
-                    printf("  Receiver %d: DUPLICATE packet %u\n", thread_index, packet_id);
-                }
-                g_received_flags[packet_id] = 1;
-                LeaveCriticalSection(&g_received_lock);
-            } else {
-                printf("  Receiver %d: UNEXPECTED packet ID %u\n", thread_index, packet_id);
-            }
-        }
-        // On timeout, break out of loop
-        else break;
-    }
-
-    return 0;
-}
-
-static int test_multi_threaded(void) {
-    printf("\n");
+void run_test(void) {
+    printf("BEGINNING TEST...\n");
     printf("==================================================\n");
-    printf("MULTI-THREADED TEST\n");
-    printf("==================================================\n");
-    printf("Sender threads:   %d\n", NUM_SENDER_THREADS);
-    printf("Receiver threads: %d\n", NUM_RECEIVER_THREADS);
-    printf("Packets per sender: %d\n", PACKETS_PER_SENDER);
-    printf("Total packets:    %d\n\n", TOTAL_PACKETS_MULTITHREADED);
 
-    /* Initialize shared state */
-    InitializeCriticalSection(&g_received_lock);
-    memset(g_received_flags, 0, sizeof(g_received_flags));
-    g_packets_received = 0;
-    g_packets_validated = 0;
+    // Set the simulation begin event to launch the test!
+    SetEvent(simulation_begin);
 
-    /* Create thread handle arrays */
-    HANDLE sender_threads[NUM_SENDER_THREADS];
-    HANDLE receiver_threads[NUM_RECEIVER_THREADS];
-
-    /* Start receiver threads first (so they're ready to receive) */
-    printf("Starting receiver threads...\n");
-    for (int i = 0; i < NUM_RECEIVER_THREADS; i++) {
-        receiver_threads[i] = CreateThread(
-            NULL,                       /* default security */
-            0,                          /* default stack size */
-            receiver_thread_func,       /* thread function */
-            (LPVOID)(intptr_t)i,        /* thread index as parameter */
-            0,                          /* run immediately */
-            NULL                        /* don't need thread ID */
-        );
-
-        if (receiver_threads[i] == NULL) {
-            printf("  FAILED to create receiver thread %d\n", i);
-            return 0;
-        }
-    }
-
-    /* Start sender threads */
-    printf("Starting sender threads...\n");
-    for (int i = 0; i < NUM_SENDER_THREADS; i++) {
-        sender_threads[i] = CreateThread(
-            NULL,
-            0,
-            sender_thread_func,
-            (LPVOID)(intptr_t)i,
-            0,
-            NULL
-        );
-
-        if (sender_threads[i] == NULL) {
-            printf("  FAILED to create sender thread %d\n", i);
-            return 0;
-        }
-    }
-
-    /* Wait for all sender threads to complete */
+    // Wait for all sender threads to complete
     printf("Waiting for sender threads to complete...\n");
-    WaitForMultipleObjects(NUM_SENDER_THREADS, sender_threads, TRUE, INFINITE);
+    WaitForMultipleObjects(
+        app.sending_thread_count,
+        app.sender_threads,
+        TRUE,
+        INFINITE
+        );
 
-    /* Close sender thread handles */
-    for (int i = 0; i < NUM_SENDER_THREADS; i++) {
-        CloseHandle(sender_threads[i]);
-    }
-
-    /* Wait for all receiver threads to complete */
+    // Wait for all receiver threads to complete
     printf("Waiting for receiver threads to complete...\n");
-    WaitForMultipleObjects(NUM_RECEIVER_THREADS, receiver_threads, TRUE, INFINITE);
+    WaitForMultipleObjects(
+        app.sending_thread_count,
+        app.receiver_threads,
+        TRUE,
+        INFINITE
+        );
 
-    /* Close receiver thread handles */
-    for (int i = 0; i < NUM_RECEIVER_THREADS; i++) {
-        CloseHandle(receiver_threads[i]);
-    }
-
-    /* Check for missing packets */
-    int missing_count = 0;
-    for (int i = 0; i < TOTAL_PACKETS_MULTITHREADED; i++) {
-        if (!g_received_flags[i]) {
-            printf("  MISSING packet %d\n", i + 1);
-            missing_count++;
-        }
-    }
-
-    /* Cleanup */
-    DeleteCriticalSection(&g_received_lock);
-
-    /* Report results */
-    printf("\n");
-    printf("--------------------------------------------------\n");
-    printf("RESULTS\n");
-    printf("--------------------------------------------------\n");
-    printf("  Packets sent:       %d\n", TOTAL_PACKETS_MULTITHREADED);
-    printf("  Packets received:   %ld\n", g_packets_received);
-    printf("  Packets validated:  %ld\n", g_packets_validated);
-    printf("  Packets missing:    %d\n", missing_count);
-    printf("\n");
-
-    if (g_packets_validated == TOTAL_PACKETS_MULTITHREADED && missing_count == 0) {
-        printf("  STATUS: PASS\n");
-        return 1;
-    } else {
-        printf("  STATUS: FAIL\n");
-        return 0;
-    }
+    printf("All application threads have terminated!\n");
 }
 
 
@@ -334,15 +166,107 @@ static int test_multi_threaded(void) {
  *   - Latency: average, minimum, maximum
  *   - Overall status
  */
-void print_stats(struct test_stats* stats) {
+void print_stats(void) {
     // TODO: Implement
+}
+
+void fill_transmission_with_pattern(PVOID* data_in, size_t length) {
+    size_t number_of_VA_stamps = length / sizeof(ULONG64);
+
+    PULONG_PTR start = (PULONG_PTR)data_in;
+    PULONG_PTR stop = start + number_of_VA_stamps;
+    ASSERT(FALSE);
+    // TODO debug me
+
+    // Stamp each 8-byte chunk in the transmission with the VA of where it is stored
+    while (start < stop) {
+        *start = (ULONG_PTR)start;
+        start++;
+    }
+}
+
+// TODO Allocate all transmission data and fill in the transmission_info fields
+//  for each transmission: PVOID data_out, UINT16 id, size_t length
+void create_transmission_data(void) {
+
+    TRANSMISSION_INFO temp;
+
+    for (int i = 0; i < app.transmission_count; i++) {
+
+        temp.length_bytes = app.max_transmission_limit_KB * KB(1);
+        temp.data_in = zero_malloc(temp.length_bytes);
+        temp.data_out = zero_malloc(temp.length_bytes);
+        temp.id = i;
+        temp.receive_count = 0;
+        temp.status = UNSENT;
+        temp.time_sent_ms = 0;
+        temp.time_received_ms = 0;
+
+        // Fill the transmission with its pattern
+        fill_transmission_with_pattern(&temp.data_in, temp.length_bytes);
+
+        // Copy the newly created transmission into our array
+        memcpy(
+            &app.transmission_info[i],
+            &temp,
+            sizeof(TRANSMISSION_INFO)
+            );
+    }
 }
 
 void create_application_layer(void) {
 
+    // Initialize app state as well as all transmissions
+    create_transmission_data();
+
+    // Create receiver threads
+    for (int i = 0; i < app.receiving_thread_count; i++) {
+
+        app.receiver_threads[i] = CreateThread(
+            DEFAULT_SECURITY,           // default security
+            DEFAULT_STACK_SIZE,         // default stack size
+            (LPTHREAD_START_ROUTINE) app_receiver,
+            NULL,                       // no parameter
+            DEFAULT_CREATION_FLAGS,     // run immediately
+            &app.receiver_thread_ids[i] // thread index is ID
+        );
+
+        if (app.receiver_threads[i] == NULL) {
+            printf("  FAILED to create receiver thread %d\n", i);
+            return;
+        }
+    }
+
+    // Create sender threads
+    for (int i = 0; i < app.sending_thread_count; i++) {
+
+        app.sender_threads[i] = CreateThread(
+            DEFAULT_SECURITY,           // default security
+            DEFAULT_STACK_SIZE,         // default stack size
+            (LPTHREAD_START_ROUTINE) app_sender,
+            NULL,                       // no parameter
+            DEFAULT_CREATION_FLAGS,     // run immediately
+            &app.sender_thread_ids[i]   // thread index is ID
+        );
+
+        if (app.sender_threads[i] == NULL) {
+            printf("  FAILED to create sender thread %d\n", i);
+            return;
+        }
+    }
 }
 
 void free_application_layer(void) {
+
+    // Close sender thread handles
+    for (int i = 0; i < app.sending_thread_count; i++) {
+        CloseHandle(app.sender_threads[i]);
+    }
+
+    // Close receiver thread handles
+    for (int i = 0; i < app.receiving_thread_count; i++) {
+        CloseHandle(app.receiver_threads[i]);
+    }
 
 }
 
@@ -370,7 +294,6 @@ void initialize_layers_and_all_data(void) {
     // Initialize timing
     time_init();
 
-    SetEvent(simulation_begin);
 }
 
 void free_all_data_and_shut_down(void) {
@@ -385,15 +308,14 @@ void free_all_data_and_shut_down(void) {
     CloseHandle(simulation_end);
 }
 
-#define ARG_ERROR   -1
-ULONG64 parse_argument_as_integer(char *arg, ULONG64 min, ULONG64 max) {
+LONG64 parse_argument_as_integer(char *arg, ULONG64 min, ULONG64 max) {
     if (arg == NULL || *arg == '\0') return ARG_ERROR;   // NULL or empty
     if (*arg == '-') return ARG_ERROR;                   // Negative
     if (*arg < '0' || *arg > '9') return ARG_ERROR;      // Must start with digit (rejects whitespace)
 
     char *end;
     errno = 0;
-    ULONG64 val = strtoul(arg, &end, 10);
+    LONG64 val = strtoul(arg, &end, 10);
 
     if (errno == ERANGE) return ARG_ERROR;         // Overflow
     if (*end != '\0') return ARG_ERROR;            // Trailing garbage
@@ -403,90 +325,113 @@ ULONG64 parse_argument_as_integer(char *arg, ULONG64 min, ULONG64 max) {
     return val;
 }
 
+BOOL validate_input(int argc, char ** argv) {
+    // If the user specifies command line arguments, ensure they are valid.
+    if (argc == ARG_COUNT) {
+        app.sending_thread_count = parse_argument_as_integer(argv[1],
+            MIN_THREAD_COUNT,
+            MAX_THREAD_COUNT);
+        if (app.sending_thread_count == ARG_ERROR) {
+            printf("Error: thread count must be between %d and %d.\n",
+                MIN_THREAD_COUNT,
+                MAX_THREAD_COUNT);
+            return FALSE;
+        }
+
+        app.receiving_thread_count = parse_argument_as_integer(argv[2],
+            MIN_THREAD_COUNT,
+            MAX_THREAD_COUNT);
+        if (app.receiving_thread_count == ARG_ERROR) {
+            printf("Error: thread count must be between %d and %d.\n",
+                MIN_THREAD_COUNT,
+                MAX_THREAD_COUNT);
+            return FALSE;
+        }
+
+        app.transmission_count = parse_argument_as_integer(argv[3],
+            MIN_TRANSMISSION_COUNT,
+            MAX_TRANSMISSION_COUNT);
+
+        if (app.transmission_count == ARG_ERROR) {
+            printf("Error: transmission count must be between %d and %d.\n",
+                MIN_TRANSMISSION_COUNT,
+                MAX_TRANSMISSION_COUNT);
+            return FALSE;
+        }
+
+        app.max_transmission_limit_KB = parse_argument_as_integer(argv[4],
+            MIN_TRANSMISSION_LIMIT_KB,
+            MAX_TRANSMISSION_LIMIT_KB);
+
+        if (app.max_transmission_limit_KB == ARG_ERROR) {
+            printf("Error: max transmission limit must be between %d and %d.\n",
+                MIN_TRANSMISSION_LIMIT_KB,
+                MAX_TRANSMISSION_LIMIT_KB);
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
 /*
  * main
  *
  * Entry point. Initializes timer and network, runs test, prints results.
  *
- * Usage: PacketTransporter.exe [sending threads] [receiving threads] [max transmission size]
- * Arguments:   sending threads:    number of application threads sending transmissions.    Default: 1
- *              receiving threads   number of app threads receiving transmissions.          Default: 1
- *              max transmission size:  maximum size of a transmission in the test.         Default: 128 KB
+ * Usage: PacketTransporter.exe
+ *      [sending threads]           number of application threads sending transmissions.    Default: 1
+ *      [receiving threads]         number of app threads receiving transmissions.          Default: 1
+ *      [transmission count]        number of transmissions.                                Default: 1
+ *      [max transmission size]     maximum size of a transmission in the test.             Default: 128 KB
  */
 int main(int argc, char** argv) {
 
-    if (argc != 1 && argc != 4) {
-        printf("Usage: PacketTransporter.exe [sending threads]"
-               "[receiving threads] [max transmission size]");
+    // Ensure proper usage
+    if (argc != 1 && argc != ARG_COUNT) {
+        printf("Usage: PacketTransporter.exe\n\t[sending threads]\n"
+               "\t[receiving threads]\n\t[transmission count]\n\t[max transmission size]\n");
         return 1;
     }
-    // If the user specifies command line arguments, ensure they are valid.
-    if (argc == 4) {
-        sending_thread_count = parse_argument_as_integer(argv[1],
-            MIN_THREAD_COUNT,
-            MAX_THREAD_COUNT);
-        if (sending_thread_count == ARG_ERROR) {
-            printf("Error: thread count must be between %d and %d.\n",
-                MIN_THREAD_COUNT,
-                MAX_THREAD_COUNT);
-            return 1;
-        }
+    printf("==================================================\n");
+    printf("Launching Packet Transporter\n");
+    printf("==================================================\n");
+    printf("Validating input...\n");
 
-        receiving_thread_count = parse_argument_as_integer(argv[2],
-            MIN_THREAD_COUNT,
-            MAX_THREAD_COUNT);
-        if (receiving_thread_count == ARG_ERROR) {
-            printf("Error: thread count must be between %d and %d.\n",
-                MIN_THREAD_COUNT,
-                MAX_THREAD_COUNT);
-            return 1;
-        }
-
-        max_transmission_limit = parse_argument_as_integer(argv[3],
-            MIN_TRANSMISSION_LIMIT_KB,
-            MAX_TRANSMISSION_LIMIT_KB);
-
-        if (max_transmission_limit == ARG_ERROR) {
-            printf("Error: max transmission limit must be between %d and %d.\n",
-                MIN_TRANSMISSION_LIMIT_KB,
-                MAX_TRANSMISSION_LIMIT_KB);
-            return 1;
-        }
-    }
+    initialize_app_state();
+    if (!validate_input(argc, argv)) return 1;
 
     // Now that we have validated the command line arguments, let's print a message indicating that
     // we are beginning to set up the test
-    printf("======================================\n");
-    printf("Launching Packet Transporter Test\n");
-    printf("======================================\n");
-    printf("Sending threads: %llu\n", sending_thread_count);
-    printf("Receiving threads: %llu\n", receiving_thread_count);
-    printf("Max transmission limit KB: %llu\n", max_transmission_limit);
-    printf("======================================\n");
-    printf("Initializing layers...\n");
+    printf("Input is valid!\n");
+    printf("==================================================\n");
+    printf("Sending threads: %llu\n", app.sending_thread_count);
+    ASSERT(app.sending_thread_count > 0 && app.sending_thread_count <= MAX_THREAD_COUNT);
+    printf("Receiving threads: %llu\n", app.receiving_thread_count);
+    ASSERT(app.receiving_thread_count > 0 && app.receiving_thread_count <= MAX_THREAD_COUNT);
+    printf("Transmission count: %d\n", app.transmission_count);
+    ASSERT(app.transmission_count > 0 && app.transmission_count <= MAX_TRANSMISSION_COUNT);
+    printf("Max transmission limit KB: %llu\n", app.max_transmission_limit_KB);
+    ASSERT(app.max_transmission_limit_KB > 0 && app.max_transmission_limit_KB <= MAX_TRANSMISSION_LIMIT_KB);
+    printf("==================================================\n");
 
     // Now we will initialize all layers
+    printf("Initializing layers...\n");
     initialize_layers_and_all_data();
+    printf("Layers initialized!\n");
+    printf("==================================================\n");
 
-    printf("Done!\n");
-    printf("======================================\n");
-    printf("Now launching test...\n");
     // Now we will begin the test!
-
-    int pass_count = 0;
-    int total_tests = 1;
-
-    if (test_multi_threaded()) pass_count++;
+    run_test();
 
     printf("Done!\n");
-    printf("======================================\n");
+    printf("==================================================\n");
 
     // Finally, we will clean up and print out relevant statistics
     free_all_data_and_shut_down();
 
     printf("Printing statistics...\n");
+    print_stats();
     printf("==================================================\n");
-    printf("SUMMARY: %d of %d tests passed\n", pass_count, total_tests);
-    printf("======================================\n");
+
     return 0;
 }
