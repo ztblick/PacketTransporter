@@ -33,8 +33,8 @@
 #define STATUS_RECEIVED     2
 
 typedef struct transmission_info {
-    PVOID data_out;
-    PVOID data_in;
+    PVOID data_sent;
+    PVOID data_received;
     UINT16 id;
     UINT16 receive_count;
     UINT16 status;
@@ -65,8 +65,8 @@ typedef struct app_state {
     ULONG sender_thread_ids[MAX_THREAD_COUNT];
     ULONG receiver_thread_ids[MAX_THREAD_COUNT];
 
-    ULONG64 lock_sent[TRANSMISSION_LOCK_ROWS];
-    ULONG64 lock_received[TRANSMISSION_LOCK_ROWS];
+    LONG64 lock_sent[TRANSMISSION_LOCK_ROWS];
+    LONG64 lock_received[TRANSMISSION_LOCK_ROWS];
 
     TRANSMISSION_INFO transmission_info[MAX_TRANSMISSION_COUNT];
 } APP_STATE, *PAPP_STATE;

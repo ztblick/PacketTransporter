@@ -74,27 +74,61 @@ void initialize_app_state(void) {
 // TODO implement delays between transmissions
 int app_sender(void) {
 
+    LONG64 slot = 0;
+    LONG64 row = 0;
+    LONG64 offset = 0;
+    LONG64 mask = 0;
+    PTRANSMISSION_INFO transmission;
+
     // Wait for system start event before entering waiting state!
     WaitForSingleObject(simulation_begin, INFINITE);
 
     // This comparison is not interlocked, which is okay --
     // we don't mind going around an extra time if necessary.
     while (app.transmissions_sent < app.transmission_count) {
+        slot = slot % app.transmission_count;
+        row = slot / 64;
+        offset = slot % 64;
+        mask = (1LL << offset);
 
         // Check the lock -- if it's totally 1s, move on to the next row
+        if (app.lock_sent[row] == BITMAP_ROW_FULL_VALUE) {
+            slot = (row + 1) * 64;
+            continue;
+        }
 
         // Check this bit -- if it's 1, move on to the next bit
+        if (app.lock_sent[row] & mask) {
+            slot++;
+            continue;
+        }
 
         // Interlocked set it -- if you did not win, move on to the next bit
+        if (InterlockedBitTestAndSet64(&app.lock_sent[row], offset)) {
+            slot++;
+            continue;
+        }
 
         // You won! Congrats. Now it is your job to send THIS transmission
-
         // Timestamp it
+        transmission = &app.transmission_info[slot];
+        ASSERT(transmission->time_sent_ms == 0);
+        transmission->time_sent_ms = time_now_ms();
+
+        // Send it
+        send_transmission(
+            transmission->id,
+            transmission->data_sent,
+            transmission->length_bytes
+            );
 
         // Once you have sent it, update its status to SENT
+        ASSERT(transmission->status == UNSENT);
+        transmission->status = SENT;
 
         // Interlocked increment app.transmissions_sent
-
+        InterlockedIncrement16(&app.transmissions_sent);
+        ASSERT(app.transmissions_sent <= app.transmission_count);
     }
 
     return 0;
@@ -170,13 +204,11 @@ void print_stats(void) {
     // TODO: Implement
 }
 
-void fill_transmission_with_pattern(PVOID* data_in, size_t length) {
+void fill_transmission_with_pattern(PVOID data_in, size_t length) {
     size_t number_of_VA_stamps = length / sizeof(ULONG64);
 
     PULONG_PTR start = (PULONG_PTR)data_in;
     PULONG_PTR stop = start + number_of_VA_stamps;
-    ASSERT(FALSE);
-    // TODO debug me
 
     // Stamp each 8-byte chunk in the transmission with the VA of where it is stored
     while (start < stop) {
@@ -185,8 +217,6 @@ void fill_transmission_with_pattern(PVOID* data_in, size_t length) {
     }
 }
 
-// TODO Allocate all transmission data and fill in the transmission_info fields
-//  for each transmission: PVOID data_out, UINT16 id, size_t length
 void create_transmission_data(void) {
 
     TRANSMISSION_INFO temp;
@@ -194,8 +224,8 @@ void create_transmission_data(void) {
     for (int i = 0; i < app.transmission_count; i++) {
 
         temp.length_bytes = app.max_transmission_limit_KB * KB(1);
-        temp.data_in = zero_malloc(temp.length_bytes);
-        temp.data_out = zero_malloc(temp.length_bytes);
+        temp.data_sent = zero_malloc(temp.length_bytes);
+        temp.data_received = zero_malloc(temp.length_bytes);
         temp.id = i;
         temp.receive_count = 0;
         temp.status = UNSENT;
@@ -203,7 +233,7 @@ void create_transmission_data(void) {
         temp.time_received_ms = 0;
 
         // Fill the transmission with its pattern
-        fill_transmission_with_pattern(&temp.data_in, temp.length_bytes);
+        fill_transmission_with_pattern(temp.data_sent, temp.length_bytes);
 
         // Copy the newly created transmission into our array
         memcpy(
