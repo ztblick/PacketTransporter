@@ -48,6 +48,8 @@ request retransmissions, deliver complete data
 
 ## Project Phases
 
-1. **Phase 1**: Single connection
-2. **Phase 2**: Multiple concurrent connections
-3. **Phase 3**: Performance optimizations
+**Phase 1**: Single connection
+
+**Phase 2**: Multiple concurrent connections
+
+**Phase 3**: Performance optimizations
