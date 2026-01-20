@@ -19,7 +19,7 @@
 #define MIN_THREAD_COUNT                1
 #define MAX_THREAD_COUNT                64
 
-#define DEFAULT_TRANSMISSION_LIMIT_KB   128
+#define DEFAULT_TRANSMISSION_LIMIT_KB   256
 #define MIN_TRANSMISSION_LIMIT_KB       1
 #define MAX_TRANSMISSION_LIMIT_KB       (1024 * 1024)
 
@@ -32,13 +32,19 @@
 #define STATUS_SENT         1
 #define STATUS_RECEIVED     2
 
+// Assuming a 256 KB transmission going one packet at a time, we would expect this to take
+// size / packet size * roundtrip time = 256 * 20 ms = ~5000 ms = 5 s
+#define RECEIVER_TIMEOUT_MS                     5000
+#define RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT    50
+
 typedef struct transmission_info {
     PVOID data_sent;
     PVOID data_received;
-    UINT16 id;
-    UINT16 receive_count;
-    UINT16 status;
-    size_t length_bytes;
+    UINT32 id;
+    UINT32 status;
+    LONG64 receive_count;
+    size_t bytes_sent;
+    size_t bytes_received;
     ULONG64 time_sent_ms;
     ULONG64 time_received_ms;
 } TRANSMISSION_INFO, *PTRANSMISSION_INFO;
@@ -78,18 +84,17 @@ typedef struct test_stats {
     // Correctness metrics
     int transmissions_sent;
     int transmissions_received;
-    int transmissions_validated;  // Byte-for-byte match
-    int transmissions_failed;     // Mismatch or missing
+    int transmissions_validated;
+    int transmissions_missing;
+    int transmissions_incomplete;
 
     // Performance metrics
     size_t total_bytes;           // Total bytes across all transmissions
-    uint64_t total_time_ms;       // Wall clock time from first send to last receive
-    double throughput_bps;        // Bytes per second
+    ULONG64 total_time_ms;        // Wall clock time from first send to last receive
+    double throughput_bps;        // Bits per second
 
     // Latency metrics (in milliseconds)
     double latency_avg_ms;
-    uint64_t latency_min_ms;
-    uint64_t latency_max_ms;
 } STATS, *PSTATS;
 
 /*

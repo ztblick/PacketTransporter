@@ -43,6 +43,8 @@ void free_transport_layer(void);
  *   - Must break data into packets, each tagged with transmission_id
  *   - Should return only after transmission is complete or has failed
  */
+#define TRANSMISSION_ACCEPTED       0
+#define TRANSMISSION_REJECTED       1
 int send_transmission(uint32_t transmission_id, void* data, size_t length);
 
 
@@ -60,7 +62,6 @@ int send_transmission(uint32_t transmission_id, void* data, size_t length);
  * Returns:
  *   0  - Transmission received successfully (out_id, dest, out_length filled in)
  *   1  - Timeout (no transmission completed within timeout_ms)
- *   2  - Error
  *
  * Notes:
  *   - Returns a completed transmission
@@ -69,4 +70,6 @@ int send_transmission(uint32_t transmission_id, void* data, size_t length);
  *   - Must reassemble packets into complete transmissions
  *   - Caller is responsible for providing a dest buffer large enough
  */
+#define TRANSMISSION_RECEIVED       0
+#define NO_TRANSMISSION_AVAILABLE   1
 int receive_transmission(uint32_t* out_id, void* dest, size_t* out_length, int timeout_ms);

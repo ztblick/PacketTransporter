@@ -49,8 +49,8 @@
 #include "application.h"
 
 // Our global variables:
-APP_STATE app;
-
+APP_STATE app = {0};
+STATS stats = {0};
 
 void initialize_app_state(void) {
     app.sending_thread_count = DEFAULT_THREAD_COUNT;
@@ -71,7 +71,6 @@ void initialize_app_state(void) {
  *
  * This thread continuously sends transmissions until there are none left to send.
  */
-// TODO implement delays between transmissions
 int app_sender(void) {
 
     LONG64 slot = 0;
@@ -79,6 +78,7 @@ int app_sender(void) {
     LONG64 offset = 0;
     LONG64 mask = 0;
     PTRANSMISSION_INFO transmission;
+    int status;
 
     // Wait for system start event before entering waiting state!
     WaitForSingleObject(simulation_begin, INFINITE);
@@ -110,27 +110,37 @@ int app_sender(void) {
         }
 
         // You won! Congrats. Now it is your job to send THIS transmission
-        // Timestamp it
         transmission = &app.transmission_info[slot];
+
+        // Send it
+        status = send_transmission(
+            transmission->id,
+            transmission->data_sent,
+            transmission->bytes_sent
+            );
+
+        // If the transmission was not accepted,
+        // unlock this slot and try again.
+        if (status == TRANSMISSION_REJECTED) {
+            InterlockedBitTestAndReset64(&app.lock_sent[row], offset);
+            continue;
+        }
+
+        // Timestamp it
         ASSERT(transmission->time_sent_ms == 0);
         transmission->time_sent_ms = time_now_ms();
 
-        // Send it
-        send_transmission(
-            transmission->id,
-            transmission->data_sent,
-            transmission->length_bytes
-            );
-
-        // Once you have sent it, update its status to SENT
+        // Update its status to SENT
         ASSERT(transmission->status == UNSENT);
         transmission->status = SENT;
 
-        // Interlocked increment app.transmissions_sent
+        // Bump up the sent count
         InterlockedIncrement16(&app.transmissions_sent);
         ASSERT(app.transmissions_sent <= app.transmission_count);
-    }
 
+        // Move on to the next slot
+        slot++;
+    }
     return 0;
 }
 
@@ -138,26 +148,72 @@ int app_sender(void) {
 /*
  * receiver_thread
  *
- * Thread function for receiving and validating transmissions.
- * Loops calling receive_transmission until all expected transmissions
- * are received or max_total_timeout_ms is exceeded.
- * For each received transmission, validates against sent records.
+ * This thread loops, calling receive_transmission until either (A) all transmissions have been received,
+ * or (B) the thread hits a timeout and exits.
  */
 int app_receiver(VOID) {
-    // TODO: Implement
+
+    ULONG64 start_ms;
+    ULONG64 end_ms;
+    TRANSMISSION_INFO transmission;
+    PTRANSMISSION_INFO info;
+    int status;
+    LONG64 row;
+    LONG64 offset;
+
+    // Wait for simulation start event
+    WaitForSingleObject(simulation_begin, INFINITE);
+
+    start_ms = time_now_ms();
+    end_ms = start_ms + RECEIVER_TIMEOUT_MS;
+
+    // While there are still transmissions to receive AND we haven't timed out
+    while (time_now_ms() < end_ms && app.transmissions_received < app.transmission_count) {
+
+        // Try calling receive transmission
+        status = receive_transmission(
+            &transmission.id,
+            &transmission.data_received,
+            &transmission.bytes_received,
+            RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT
+            );
+
+        // If unsuccessful, wait, then try again
+        if (status == NO_TRANSMISSION_AVAILABLE) continue;
+
+        ASSERT(transmission.id > 0 && transmission.id < app.transmission_count);
+        ASSERT(transmission.bytes_received > 0 && transmission.bytes_received <= MAX_TRANSMISSION_LIMIT_KB * KB(1));
+
+        row = transmission.id / 64;
+        offset = transmission.id % 64;
+
+        // Keep track of where in our global info this transmission's data belongs
+        info = &app.transmission_info[transmission.id];
+
+        // Acquire the lock
+        // If you can't acquire it, then someone else already received this transmission -- update receive count and continue
+        if (InterlockedBitTestAndSet64(
+            &app.lock_received[row],
+            offset
+            )) {
+            InterlockedIncrement64(&info->receive_count);
+            continue;
+        }
+
+        // If successful -- update info!
+        info->time_received_ms = time_now_ms();
+        info->bytes_received = transmission.bytes_received;
+        info->status = RECEIVED;
+        memcpy(
+            info->data_received,
+            transmission.data_received,
+            transmission.bytes_received
+            );
+
+        // increment received count
+        InterlockedIncrement64(&info->receive_count);
+    }
     return 0;
-}
-
-
-/*
- * generate_test_data
- *
- * Generates random test data for a transmission.
- * Returns malloc'd buffer filled with pseudo-random bytes.
- */
-static void* generate_test_data(size_t length) {
-    // TODO: Implement
-    return NULL;
 }
 
 void run_test(void) {
@@ -201,7 +257,74 @@ void run_test(void) {
  *   - Overall status
  */
 void print_stats(void) {
-    // TODO: Implement
+
+    PULONG_PTR start_sent;
+    PULONG_PTR end_sent;
+    PULONG_PTR start_receieved;
+    PULONG_PTR end_receieved;
+    PTRANSMISSION_INFO info;
+
+    stats.transmissions_sent = app.transmissions_sent;
+    stats.transmissions_received = app.transmissions_received;
+
+    // Loop through all transmissions
+    for (int i = 0; i < app.transmission_count; i++) {
+
+        info = &app.transmission_info[i];
+
+        // If received, validate it
+        if (info->status != RECEIVED) {
+            stats.transmissions_missing++;
+            continue;
+        }
+
+        // If validated, update validated count
+        start_sent = info->data_sent;
+        end_sent = (PULONG_PTR)info->data_sent + info->bytes_sent / 8;
+        start_receieved = info->data_received;
+        end_receieved = (PULONG_PTR)info->data_received + info->bytes_sent / 8;
+        while (TRUE) {
+            if (*start_sent != *start_receieved) {
+                stats.transmissions_incomplete++;
+                break;
+            }
+            start_sent++;
+            start_receieved++;
+
+            if (start_sent == end_sent &&
+                start_receieved == end_receieved) {
+                stats.transmissions_validated++;
+                break;
+            }
+
+            if (start_sent == end_sent ||
+                start_receieved == end_receieved) {
+                stats.transmissions_incomplete++;
+                break;
+            }
+        }
+
+        // Update total data sent and total time
+        stats.total_time_ms += info->time_received_ms - info->time_sent_ms;
+        stats.total_bytes += info->bytes_received;
+    }
+
+    if (stats.transmissions_received > 0) {
+        stats.latency_avg_ms = (double) stats.total_time_ms / stats.transmissions_received;
+        stats.throughput_bps = (double) stats.total_bytes / stats.total_time_ms * 1000;
+    }
+
+    // Now print things out!
+    printf("TRANSMISSIONS SENT: \t\t%d\n", stats.transmissions_sent);
+    printf("TRANSMISSIONS RECEIVED: \t%d\n", stats.transmissions_received);
+    printf("TRANSMISSIONS MISSING: \t\t%d\n\n", stats.transmissions_missing);
+
+    printf("TRANSMISSIONS VALIDATED: \t%d\n", stats.transmissions_validated);
+    printf("TRANSMISSIONS INCOMPLETE: \t%d\n\n", stats.transmissions_incomplete);
+
+    printf("AVERAGE LATENCY: \t\t%.2f ms\n", stats.latency_avg_ms);
+    printf("THROUGHPUT: \t\t\t%.1f Kbps\n", stats.throughput_bps / KB(1));
+
 }
 
 void fill_transmission_with_pattern(PVOID data_in, size_t length) {
@@ -223,9 +346,9 @@ void create_transmission_data(void) {
 
     for (int i = 0; i < app.transmission_count; i++) {
 
-        temp.length_bytes = app.max_transmission_limit_KB * KB(1);
-        temp.data_sent = zero_malloc(temp.length_bytes);
-        temp.data_received = zero_malloc(temp.length_bytes);
+        temp.bytes_sent = app.max_transmission_limit_KB * KB(1);
+        temp.data_sent = zero_malloc(temp.bytes_sent);
+        temp.data_received = zero_malloc(temp.bytes_sent);
         temp.id = i;
         temp.receive_count = 0;
         temp.status = UNSENT;
@@ -233,7 +356,7 @@ void create_transmission_data(void) {
         temp.time_received_ms = 0;
 
         // Fill the transmission with its pattern
-        fill_transmission_with_pattern(temp.data_sent, temp.length_bytes);
+        fill_transmission_with_pattern(temp.data_sent, temp.bytes_sent);
 
         // Copy the newly created transmission into our array
         memcpy(
