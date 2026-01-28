@@ -71,7 +71,7 @@ void initialize_app_state(void) {
  *
  * This thread continuously sends transmissions until there are none left to send.
  */
-int app_sender(void) {
+void app_sender(void) {
 
     LONG64 slot = 0;
     LONG64 row = 0;
@@ -141,7 +141,6 @@ int app_sender(void) {
         // Move on to the next slot
         slot++;
     }
-    return 0;
 }
 
 
@@ -151,7 +150,7 @@ int app_sender(void) {
  * This thread loops, calling receive_transmission until either (A) all transmissions have been received,
  * or (B) the thread hits a timeout and exits.
  */
-int app_receiver(VOID) {
+void app_receiver(void) {
 
     ULONG64 start_ms;
     ULONG64 end_ms;
@@ -213,7 +212,6 @@ int app_receiver(VOID) {
         // increment received count
         InterlockedIncrement64(&info->receive_count);
     }
-    return 0;
 }
 
 void run_test(void) {
@@ -260,8 +258,8 @@ void print_stats(void) {
 
     PULONG_PTR start_sent;
     PULONG_PTR end_sent;
-    PULONG_PTR start_receieved;
-    PULONG_PTR end_receieved;
+    PULONG_PTR start_received;
+    PULONG_PTR end_received;
     PTRANSMISSION_INFO info;
 
     stats.transmissions_sent = app.transmissions_sent;
@@ -281,24 +279,24 @@ void print_stats(void) {
         // If validated, update validated count
         start_sent = info->data_sent;
         end_sent = (PULONG_PTR)info->data_sent + info->bytes_sent / 8;
-        start_receieved = info->data_received;
-        end_receieved = (PULONG_PTR)info->data_received + info->bytes_sent / 8;
+        start_received = info->data_received;
+        end_received = (PULONG_PTR)info->data_received + info->bytes_sent / 8;
         while (TRUE) {
-            if (*start_sent != *start_receieved) {
+            if (*start_sent != *start_received) {
                 stats.transmissions_incomplete++;
                 break;
             }
             start_sent++;
-            start_receieved++;
+            start_received++;
 
             if (start_sent == end_sent &&
-                start_receieved == end_receieved) {
+                start_received == end_received) {
                 stats.transmissions_validated++;
                 break;
             }
 
             if (start_sent == end_sent ||
-                start_receieved == end_receieved) {
+                start_received == end_received) {
                 stats.transmissions_incomplete++;
                 break;
             }
@@ -311,7 +309,7 @@ void print_stats(void) {
 
     if (stats.transmissions_received > 0) {
         stats.latency_avg_ms = (double) stats.total_time_ms / stats.transmissions_received;
-        stats.throughput_bps = (double) stats.total_bytes / stats.total_time_ms * 1000;
+        stats.throughput_bps = (double) stats.total_bytes / (double) stats.total_time_ms * 1000;
     }
 
     // Now print things out!
@@ -501,7 +499,7 @@ BOOL validate_input(int argc, char ** argv) {
             return FALSE;
         }
 
-        app.transmission_count = parse_argument_as_integer(argv[3],
+        app.transmission_count = (INT16) parse_argument_as_integer(argv[3],
             MIN_TRANSMISSION_COUNT,
             MAX_TRANSMISSION_COUNT);
 

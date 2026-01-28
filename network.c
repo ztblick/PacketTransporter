@@ -500,7 +500,7 @@ void wire_to_NIC_thread(PNETWORK_STATE n) {
                     offset);
                 ASSERT(net_bit);
 #if DEBUG
-                printf("Inbound NIC full -- dropping packet %d\n", entry->packet.transmission_id);
+                printf("Inbound NIC full -- dropping packet %d\n", entry->packet.header.transmission_id);
 #endif
 
 
@@ -634,7 +634,7 @@ int send_packet(PPACKET pkt, int role) {
 
     // Validate inputs to ensure proper usage
     if (pkt == NULL)                                    return PACKET_REJECTED;
-    if (pkt->length > MAX_PAYLOAD_SIZE)                 return PACKET_REJECTED;
+    if (pkt->header.bytes_sent > MAX_PAYLOAD_SIZE)                 return PACKET_REJECTED;
     if (role != ROLE_SENDER && role != ROLE_RECEIVER)   return PACKET_REJECTED;
 
     // TODO: Apply network unreliability (drop, duplicate, corrupt, reorder)

@@ -20,6 +20,7 @@
 
 // Maximum number of bytes per packet
 #define MAX_PAYLOAD_SIZE        KB(1)
+#define MAX_PACKETS_TO_ACK      (MAX_PAYLOAD_SIZE * 8)
 
 // Default timeout for receive_packet (milliseconds)
 #define PACKET_WAIT_TIME_MS     500
