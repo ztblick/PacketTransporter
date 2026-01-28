@@ -39,8 +39,9 @@ typedef struct comm_packet {
     UINT32 bitmaps_sent;              // Documents how many of the 1-byte bitmaps contain ACKs
                                       // This must be > 0 and < MAX_PAYLOAD_SIZE.
 
-    UINT32 reserved_0;                // This memory is not used for a comm packet yet, but it is allocated
-    UINT32 reserved_1;                // so the overlay of the two packet structs remains consistent.
+    UINT32 first_packet_index;        // Indicates the packet number of the first packet in the bitmaps.
+    UINT32 reserved;                  // This memory is not used for a comm packet yet, but it is allocated
+                                      // so the overlay of the two packet structs remains consistent.
 
     BYTE bitmaps[MAX_PAYLOAD_SIZE];   // Contains bitmaps, where each 0 indicates a packet that WAS NOT
                                       // received and a 1 indicates a packet that WAS received.
