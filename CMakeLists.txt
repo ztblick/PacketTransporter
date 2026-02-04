@@ -10,4 +10,6 @@ add_executable(PacketTransporter application.c network.c
         utils.c
         utils.h
         network_packets.h
-        transport_packets.h)
+        transport_packets.h
+        transport_sender.h
+        transport_receiver.h)
