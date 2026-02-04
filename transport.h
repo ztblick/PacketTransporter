@@ -10,6 +10,20 @@
 #pragma once
 
 #include "network.h"
+#include "transport_receiver.h"
+#include "transport_sender.h"
+
+typedef struct {
+    LIST_ENTRY list_entry;
+    PPACKET packet;
+} PACKET_LIST_ENTRY, *PPACKET_LIST_ENTRY;
+
+typedef struct {
+    PACKET_LIST_ENTRY entry;
+    int list_length;
+    CRITICAL_SECTION lock;
+
+} PACKET_LIST_HEAD, *PPACKET_LIST_HEAD;
 
 /*
  *  create_transport_layer
