@@ -14,7 +14,7 @@ network.h               Contains functions headers and error codes
     |                   for the network functions.
     |
     V
-utils.h                 Contains packet struct
+utils.h                 Contains universal packet header struct
     |                   Contains timing functions and zero_malloc
     |
     V

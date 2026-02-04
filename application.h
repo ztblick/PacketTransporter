@@ -102,19 +102,8 @@ typedef struct test_stats {
  *
  * Thread function for sending a single transmission.
  * Multiple instances can run concurrently on separate threads.
- *
- * Parameters:
- *   arg - Pointer to a transmission_info record containing:
- *         id, data, and length to send
- *
- * Returns:
- *   0 - Transmission sent and acknowledged by transport layer
- *   1 - Error
- *
- * Usage:
- *   CreateThread(NULL, 0, sender_thread, &transmission_info, 0, NULL);
  */
-int app_sender(void);
+void app_sender(void);
 
 /*
  * receiver_thread
@@ -122,30 +111,13 @@ int app_sender(void);
  * Thread function for receiving and validating transmissions.
  * Runs on a single thread, repeatedly calls receive_transmission
  * until all expected transmissions are received or timeout.
- *
- * Parameters:
- *   none
- *
- * Returns:
- *   0 (results stored in test_stats)
- *
- * Usage:
- *   CreateThread(NULL, 0, receiver_thread, &config, 0, NULL);
  */
-int app_receiver(void);
+void app_receiver(void);
 
 /*
  * run_test
  *
- * Runs a complete test with n transmissions.
- *
- * Parameters:
- *   num_transmissions - Number of transmissions to send
- *   stats             - Pointer to struct where results will be written
- *
- * Returns:
- *   0  - Test completed (check stats for pass/fail details)
- *  -1  - Test setup failed
+ * Runs a complete test.
  */
 void run_test(void);
 
@@ -153,8 +125,5 @@ void run_test(void);
  * print_stats
  *
  * Prints test statistics to stdout.
- *
- * Parameters:
- *   stats - Pointer to populated test_stats struct
  */
 void print_stats(void);

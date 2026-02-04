@@ -9,7 +9,5 @@ add_executable(PacketTransporter application.c network.c
         debug.h
         utils.c
         utils.h
-        sender/senderThread.c
-        sender/senderThread.h
-        sender/senderListenerThread.c
-        sender/senderListenerThread.h)
+        network_packets.h
+        transport_packets.h)
