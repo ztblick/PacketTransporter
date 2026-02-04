@@ -6,54 +6,39 @@
 
 #include "config.h"
 
-/*
- * Common packet header - shared by both packet types
- */
-typedef struct packet_header {
-    UINT32 transmission_id : 31;  // Identifies which transmission this packet belongs to
-    UINT32 packet_type : 1;       // 0 = data packet, 1 = comm packet
-    UINT32 bytes_sent;            // Bytes in payload (data) or bitmaps (comm)
-} PACKET_HEADER;
+/**
+ *   ===============================================================================
+ *   ||   UNIVERSAL PACKET HEADER    ||   DATA / COMM HEADER   ||     PAYLOAD     ||
+ *   ===============================================================================
+ *
+ *  UNIVERSAL PACKET HEADER
+ *  The universal header can contain any number of fields, but it MUST begin with the size of the
+ *  universal header (ULONG64). After that, it must include the transmission ID and the packet type.
+ *  Finally, the total size of the payload (in bytes) is included.
+ *  As packet structures grow and change over time, the struct can expand to hold more fields
+ *  and minimal edits will need to be made to the code.
+ *
+ *  DATA / COMM HEADER
+ *  Following the universal header is a header specifically for either a data packet or a comm packet.
+ *  This also begins with the number of bytes in the header (ULONG64). Additional fields can follow.
+ *
+ *  PAYLOAD
+ *  Finally, after the data or comm header is the payload.
+ **/
+
 
 /*
- * Data Packet -- contains transmission data and metadata.
+ * Universal packet header - shared by both packet types
  */
-typedef struct data_packet {
-    UINT32 transmission_id : 31;      // Indicates which transmission this packet belongs to.
-    UINT32 must_be_zero : 1;          // When this bit is cleared, we interpret the packet as a data packet.
-    UINT32 bytes_in_payload;          // Documents how many bytes in the payload are relevant.
-                                      // This must be > 0 and < MAX_PAYLOAD_SIZE.
+typedef struct universal_packet_header {
+    ULONG64 total_bytes_in_packet_header;   // Describes the size of THIS header.
+    UINT32 transmission_id : 31;            // Identifies which transmission this packet belongs to
+    UINT32 packet_type : 1;                 // 0 = data packet, 1 = comm packet
+    UINT32 bytes_in_payload;                // Identifies the number of bytes transmitted in the payload.
 
-    UINT32 index_in_transmission;     // Indicates the packet's position in the transmission (e.g. packet #3/5)
-    UINT32 n_packets_in_transmission; // Contains the total number of packets in this transmission.
+    // Additional fields may be added as packets expand over time.
+    // Examples: error-correcting codes, version IDs, metadata for compression
 
-    BYTE payload[MAX_PAYLOAD_SIZE];   // Contains the actual data to be transmitted.
-} DATA_PACKET, *PDATA_PACKET;
-
-/*
- *  Comm Packet -- contains ACK bitmaps.
- */
-typedef struct comm_packet {
-    UINT32 transmission_id : 31;      // Indicates which transmission we are acknowledging.
-    UINT32 must_be_one : 1;           // When this bit is set, we interpret the packet as a comm packet.
-    UINT32 bitmaps_sent;              // Documents how many of the 1-byte bitmaps contain ACKs
-                                      // This must be > 0 and < MAX_PAYLOAD_SIZE.
-
-    UINT32 first_packet_index;        // Indicates the packet number of the first packet in the bitmaps.
-    UINT32 reserved;                  // This memory is not used for a comm packet yet, but it is allocated
-                                      // so the overlay of the two packet structs remains consistent.
-
-    BYTE bitmaps[MAX_PAYLOAD_SIZE];   // Contains bitmaps, where each 0 indicates a packet that WAS NOT
-                                      // received and a 1 indicates a packet that WAS received.
-} COMM_PACKET, *PCOMM_PACKET;
-
-/*
- *  Generic packet struct -- used by the network layer.
- */
-typedef union packet {
-    PACKET_HEADER header;
-    DATA_PACKET data;
-    COMM_PACKET comm;
 } PACKET, *PPACKET;
 
 // Timing variables

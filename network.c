@@ -5,6 +5,7 @@
  */
 
 #include "network.h"
+#include "network_packets.h"
 
 /*
  * Buffer entry objects - include packet and available time
@@ -26,6 +27,7 @@ typedef struct buffer_entry {
  */
 typedef struct network_buffer {
 
+    // TODO change this -- it is now way too small.
     BUFFER_ENTRY packets[NETWORK_BUFFER_CAPACITY];
 
     // We want one bit per packet and a minimum of one "row" in our bitmap. So we add 63 to always
@@ -67,6 +69,7 @@ void initialize_network_buffer(PNETWORK_BUFFER buffer) {
  */
 typedef struct nic_buffer {
 
+    // TODO change this -- it is now way too small.
     PACKET packets[NIC_BUFFER_CAPACITY];
     // Sending threads set reserve_slot to 1, write their packet, then set packet_ready to 1
     volatile LONG64 reserve_slot_lock[NIC_BITMAP_ROWS];
@@ -500,7 +503,7 @@ void wire_to_NIC_thread(PNETWORK_STATE n) {
                     offset);
                 ASSERT(net_bit);
 #if DEBUG
-                printf("Inbound NIC full -- dropping packet %d\n", entry->packet.header.transmission_id);
+                printf("Inbound NIC full -- dropping packet %d\n", entry->packet.transmission_id);
 #endif
 
 
@@ -634,7 +637,7 @@ int send_packet(PPACKET pkt, int role) {
 
     // Validate inputs to ensure proper usage
     if (pkt == NULL)                                    return PACKET_REJECTED;
-    if (pkt->header.bytes_sent > MAX_PAYLOAD_SIZE)                 return PACKET_REJECTED;
+    if (pkt->bytes_in_payload > MAX_PAYLOAD_SIZE)       return PACKET_REJECTED;
     if (role != ROLE_SENDER && role != ROLE_RECEIVER)   return PACKET_REJECTED;
 
     // TODO: Apply network unreliability (drop, duplicate, corrupt, reorder)
