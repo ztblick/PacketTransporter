@@ -41,33 +41,20 @@ typedef struct packet_buffer {
 
     // This contains the metadata for all packets as they are added to the buffer.
     PBUFFER_PACKET_METADATA metadata_slots;
+    ULONG64 num_metadata_slots;
 
     // This contains the actual data for the packets
     PBYTE buffer_data;
+    ULONG64 buffer_size_in_bytes;
 
     /**
      * These values are used to atomically track the locations in the buffers
      * where threads can write into and read from. These are the variables most
      * likely to experience contention, so we put them on separate cache lines to
      * prevent false sharing.
-     *
-     * It is important to have a wrap-around strategy when dealing with these values.
-     * For example: for the NIC buffers, it is sufficient to use these values as indices.
-     * So, all one needs to do is mod the value by the number of slots in the buffer.
-     * Interlocked increment is sufficient to facilitate parallel access to the metadata
-     * buffer.
-     *
-     * For the data buffer, interlocked compare-exchange is necessary. This is because
-     * there may be a case where the packet's size exceeds the capacity of the buffer.
-     * In this case, it is important for us to be able to wrap the write cursor around
-     * the buffer. And to do this, we need to use interlocked compare exchange. An interlocked
-     * add would not be sufficient, as there is no way to know how much to add when wrapping
-     * -- the act of wrapping depends on the OLD value of the write cursor, after all.
      **/
-    __declspec(align(64)) volatile ULONG64 metadata_write_cursor;
-    __declspec(align(64)) volatile ULONG64 metadata_read_cursor;
-    __declspec(align(64)) volatile ULONG64 data_read_cursor;
-    __declspec(align(64)) volatile ULONG64 data_write_cursor;
+    __declspec(align(64)) volatile ULONG64 metadata_write_slot;
+    __declspec(align(64)) volatile ULONG64 metadata_read_slot;
 
     // When this buffer's event is set, a thread waiting for
     // a packet is woken. This is a manual reset event, as
@@ -83,19 +70,21 @@ void initialize_network_packet_buffer(PNETWORK_PACKET_BUFFER buffer,
                                         ULONG64 metadata_slot_count,
                                         ULONG64 buffer_size_in_bytes) {
 
+    // Create the data buffer and the metadata buffer, and initialize their sizes.
     buffer->buffer_data = zero_malloc(
         buffer_size_in_bytes
         );
-
+    buffer->buffer_size_in_bytes = buffer_size_in_bytes;
     buffer->metadata_slots = zero_malloc(
         metadata_slot_count * sizeof(BUFFER_PACKET_METADATA)
         );
+    buffer->num_metadata_slots = metadata_slot_count;
 
-    buffer->metadata_write_cursor = 0;
-    buffer->metadata_read_cursor = 0;
-    buffer->data_write_cursor = 0;
-    buffer->data_read_cursor = 0;
+    // Set the atomic tracking variables to zero
+    buffer->metadata_write_slot = 0;
+    buffer->metadata_read_slot = 0;
 
+    // Initialize the buffer event
     buffer->packets_waiting_in_buffer = CreateEvent(
         NULL,                                   // Default security attributes
         TRUE,                                   // Manual reset event!
@@ -130,176 +119,85 @@ typedef struct network_state {
 NETWORK_STATE SR_net;
 NETWORK_STATE RS_net;
 
-ULONG64 get_empty_network_slot(PNETWORK_PACKET_BUFFER n) {
+PBUFFER_PACKET_METADATA get_empty_buffer_slot(PNETWORK_PACKET_BUFFER buffer) {
 
-    ULONG64 slot = 0;
-    ULONG64 row = 0;
-    ULONG64 offset = 0;
-    ULONG64 mask = 0;
+    PBUFFER_PACKET_METADATA packet_metadata;
+    ULONG64 write_slot = buffer->metadata_write_slot;
+    ULONG64 read_slot = buffer->metadata_read_slot;
+    ULONG64 size = buffer->num_metadata_slots;
+    ULONG64 write_slot_returned;
 
-    while (slot < NETWORK_BUFFER_CAPACITY_IN_BYTES) {
-        // Update our variables
-        row = slot / 64;
-        offset = slot % 64;
-        mask = (1ULL << offset);
+    // We check to make sure we have not filled in the entire buffer.
+    while (read_slot == write_slot || write_slot % size != read_slot % size) {
+        ASSERT(write_slot >= read_slot);
 
-        // Skip the whole row if it is all set
-        if (n->lock[row] == BITMAP_ROW_FULL_VALUE) {
-            slot = (row + 1) * 64;
-            continue;
+        // Attempt to grad the next write slot
+        write_slot_returned = InterlockedCompareExchange64(
+            (volatile PLONG64) &buffer->metadata_write_slot,
+            (LONG64) write_slot + 1,
+            (LONG64) write_slot
+            );
+
+        // If our original value is the same as the one returned, then we know we
+        // succeeded in grabbing this slot!
+        if (write_slot_returned == write_slot) {
+            packet_metadata = &buffer->metadata_slots[write_slot % size];
+            ASSERT(packet_metadata->status == EMPTY);
+            packet_metadata->status = WRITING;
+            return packet_metadata;
         }
 
-        // If this operation returns a nonzero value, then the bit is set. Move along to the next slot.
-        // If it returns 0, then the bit is cleared -- and we have found an empty slot!
-        // Doing this without an interlocked operation is okay because there are only two threads
-        // with access to the data, and the other thread (the wire to nic thread) only clears bits.
-        // It never sets them. So this 0 is a reliable value.
-        if (!(n->lock[row] & mask)) return slot;
-
-        slot++;
-    }
-
-    // If we cannot find an empty network slot, we would want to resize. But, for now, let's
-    // throw an error.
-    ASSERT(FALSE);
-    return -1;
-}
-
-LONG64 get_empty_nic_slot_outbound(PNIC_BUFFER n) {
-
-    LONG64 slot = 0;
-    LONG64 row = 0;
-    LONG64 offset = 0;
-    LONG64 row_snapshot = 0;
-    LONG64 mask = 0;
-    BOOL bit_value;
-
-    while (slot < NIC_BUFFER_CAPACITY) {
-        // Update our variables
-        row = slot / 64;
-        offset = slot % 64;
-        row_snapshot = n->reserve_slot_lock[row];
-        mask = (1LL << offset);
-
-        // Skip the whole row if it is all set
-        if (row_snapshot == BITMAP_ROW_FULL_VALUE) {
-            slot = (row + 1) * 64;
-            continue;
-        }
-
-        // If this bit is set, move on to the next slot
-        if (row_snapshot & mask) {
-            slot++;
-            continue;
-        }
-
-        // If this operation returns a nonzero value, then the bit is set. Move along to the next slot.
-        // If it returns 0, then we need to be careful. Multiple user threads are here
-        // simultaneously, so we need to make sure we don't wipe our their changes. So,
-        // we can do an interlocked bit test and set. If the returned value is 1, then
-        // another thread beat us to the slot. If not, then we got there first and the slot is ours!
-        bit_value = InterlockedBitTestAndSet64(
-            &n->reserve_slot_lock[row],
-            offset);
-        // If the bit was NOT already set -- then the slot is ours!
-        if (!bit_value) return slot;
-
-        // If the bit was set, then someone else beat us to it. Oh well!
-        // In this case, we move on to the next slot.
-        slot++;
+        // Otherwise, we will update our variables and try again
+        write_slot = buffer->metadata_write_slot;
+        read_slot = buffer->metadata_read_slot;
     }
 
     // If we cannot find an empty NIC slot, return NO_NIC_SLOT_AVAILABLE
-    return NO_NIC_SLOT_AVAILABLE;
-}
-
-
-LONG64 get_empty_nic_slot_inbound(PNIC_BUFFER n) {
-    LONG64 slot = 0;
-    LONG64 row = 0;
-    LONG64 offset = 0;
-    LONG64 mask = 0;
-    LONG64 row_snapshot = 0;
-    BOOL bit_value;
-
-    while (slot < NIC_BUFFER_CAPACITY) {
-        // Update our variables
-        row = slot / 64;
-        offset = slot % 64;
-        mask = (1LL << offset);
-        row_snapshot = n->reserve_slot_lock[row];
-
-        // Skip the whole row if it is all set
-        if (row_snapshot == BITMAP_ROW_FULL_VALUE) {
-            slot = (row + 1) * 64;
-            continue;
-        }
-
-        // If this bit is already set, continue to the next slot
-        if (row_snapshot & mask) {
-            slot++;
-            continue;
-        }
-
-        // We are the only thread writing from the network buffer to the nic. So, we need to find
-        // an empty slot, then write to it. We only need to find a 0. No transport thread changes 0 to 1,
-        // so that data will persist.
-        bit_value = InterlockedBitTestAndSet64(
-            &n->reserve_slot_lock[row],
-            offset);
-        ASSERT(!bit_value);
-        return slot;
-    }
-
-    // If we cannot find an empty NIC slot, return NO_NIC_SLOT_AVAILABLE
-    return NO_NIC_SLOT_AVAILABLE;
+    return NO_BUFFER_SLOT_AVAILABLE;
 }
 
 /**
  *  Here, the receive_packet threads request a packet from the nic.
+ *  This will check the read cursor from buffer. If there is a packet available,
+ *  it will attempt to grab it using interlocked compare exchange on the metadata
+ *  buffer read slot. If the returned value matches the original, then we know we succeeded
+ *  in getting that slot. And the slot is increased by 1, which means no other thread
+ *  can claim the same slot.
  */
-PBUFFER_PACKET_METADATA try_get_nic_packet(PNETWORK_PACKET_BUFFER n) {
-    LONG64 slot = 0;
-    LONG64 row = 0;
-    LONG64 offset = 0;
-    LONG64 mask = 0;
-    LONG64 row_snapshot = 0;
-    BOOL bit_value;
+PBUFFER_PACKET_METADATA try_get_packet_from_buffer(PNETWORK_PACKET_BUFFER buffer) {
 
-    while (slot < NIC_BUFFER_CAPACITY) {
-        // Update our variables
-        row = slot / 64;
-        offset = slot % 64;
-        mask = (1LL << offset);
-        row_snapshot = n->packet_ready_lock[row];
+    PBUFFER_PACKET_METADATA packet_metadata;
+    ULONG64 current_write_slot = buffer->metadata_write_slot;
+    ULONG64 current_read_slot = buffer->metadata_read_slot;
+    ULONG64 size = buffer->num_metadata_slots;
+    ULONG64 read_slot_returned;
 
-        // Skip the whole row if entirely empty
-        if (row_snapshot == 0) {
-            slot = (row + 1) * 64;
-            continue;
+    // If there are any packets available, we will attempt to grab the next one!
+    while (current_write_slot != current_read_slot) {
+
+        // We attempt to move the read cursor up one slot
+        read_slot_returned = InterlockedCompareExchange64(
+            (volatile PLONG64) &buffer->metadata_read_slot,
+            (LONG64) current_read_slot + 1,
+            (LONG64) current_read_slot
+            );
+
+        // If our original value is the same as the one returned, then we know we
+        // succeeded in grabbing this slot!
+        if (read_slot_returned == current_read_slot) {
+            packet_metadata = &buffer->metadata_slots[current_read_slot % size];
+            ASSERT(packet_metadata->status == READY);
+            packet_metadata->status = READING;
+            return packet_metadata;
         }
 
-        // If this slot is empty, move on to the next
-        if (!(row_snapshot & mask)) {
-            slot++;
-            continue;
-        }
-
-        // Otherwise, we will try to grab this slot! Another thread might beat us,
-        // so we will check the return value of the atomic bit reset.
-        bit_value = InterlockedBitTestAndReset64(
-                &n->packet_ready_lock[row],
-                offset);
-
-        // If the original bit was set, then we won the race for the slot!
-        if (bit_value) return slot;
-
-        // Otherwise, move on to the next slot
-        slot++;
+        // Otherwise, we will update our variables and try again
+        current_write_slot = buffer->metadata_write_slot;
+        current_read_slot = buffer->metadata_read_slot;
     }
 
     // If we cannot find an empty NIC slot, return NO_NIC_SLOT_AVAILABLE
-    return NO_NIC_SLOT_AVAILABLE;
+    return NO_BUFFER_PACKET_AVAILABLE;
 }
 
 /*
@@ -497,7 +395,7 @@ void wire_to_NIC_thread(PNETWORK_STATE n) {
             nic_offset = nic_slot % 64;
 
             // If no slots are available in the NIC, drop the packet.
-            if (nic_slot == NO_NIC_SLOT_AVAILABLE) {
+            if (nic_slot == NO_BUFFER_SLOT_AVAILABLE) {
                 // Clear the buffer lock bit and move on to the next slot
                 net_bit = InterlockedBitTestAndReset64(
                     &buffer->lock[row],
@@ -608,15 +506,25 @@ void net_init(PNETWORK_STATE n) {
     n->initialized = TRUE;
 }
 
+void buffer_free(NETWORK_PACKET_BUFFER buffer) {
+
+    // Free dynamically-allocated data
+    free(buffer.metadata_slots);
+    free(buffer.buffer_data);
+
+    // Close each event handle
+    CloseHandle(buffer.packets_waiting_in_buffer);
+}
+
 void net_free(PNETWORK_STATE n) {
     // Wait for all threads to finish running
     WaitForSingleObject(n->nic_to_wire_thread, INFINITE);
     WaitForSingleObject(n->wire_to_nic_thread, INFINITE);
 
-    // Free all data and clear all events associated with this network state
-    CloseHandle(n->outbound_NIC.packets_added_to_nic);
-    CloseHandle(n->network_buffer.packets_waiting_in_buffer);
-    CloseHandle(n->inbound_NIC.packets_added_to_nic);
+    // Free buffer data
+    buffer_free(n->inbound_NIC);
+    buffer_free(n->network_buffer);
+    buffer_free(n->outbound_NIC);
 }
 
 /*
@@ -632,15 +540,33 @@ void create_network_layer(void) {
     net_init(&RS_net);
 }
 
-
-/*
- * network_cleanup
- *
- * Frees network layer resources.
- */
+/**
+ * @brief Frees network layer resources.
+ **/
 void free_network_layer(void) {
     net_free(&SR_net);
     net_free(&RS_net);
+}
+
+BOOL acquire_buffer_space(
+    PBUFFER_PACKET_METADATA nic_packet,
+    PNETWORK_PACKET_BUFFER nic
+    ) {
+
+    // First, we will check the slot behind ours
+    // (and we must be careful to wrap around)
+
+    // We will build off of its byte offset + its size.
+
+    // If we can fit in the space following it, we will write into that space.
+    // We need to check for two things:
+        // 1. Does this reach the beginning of the next packet -- the read packet?
+        //      If it does, then we will need to reject this packet.
+
+        // 2. Does this go out of bounds? If so, then we will need to start from
+        //      location 0 and check #1 again.
+
+    return TRUE;
 }
 
 /*
@@ -657,54 +583,51 @@ int send_packet(PPACKET pkt, int role) {
 
     // TODO: Apply network unreliability (drop, duplicate, corrupt, reorder)
 
+    // Allocate all necessary stack variables
+    PNETWORK_STATE n;
+    PNETWORK_PACKET_BUFFER nic;
+    PBUFFER_PACKET_METADATA nic_packet;
+
     // Select network based on role
-    PNETWORK_STATE n = &SR_net;
+    n = &SR_net;
     if (role == ROLE_RECEIVER) n = &RS_net;
-    PNIC_BUFFER nic = &n->outbound_NIC;
+    nic = &n->outbound_NIC;
 
-    // Create our stack variables
-    LONG64 nic_slot;
-    LONG64 offset;
-    LONG64 row;
-    BOOL ready_bit;
+    // Find an available NIC slot
+    nic_packet = get_empty_buffer_slot(nic);
 
+    // If no slots are available, reject the packet
+    if (!nic_packet) return PACKET_REJECTED;
 
-    // TODO Identify the size of the packet
-
-    // TODO Identify the number of consecutive slots needed
-
-    // TODO Reserve that many slots. If not possible, reject the packet.
-
-    /**
-     *  To reserve slots: determine the power of 2 above the slot number.
-     */
-
-    // Find an available NIC slot by checking reserve lock
-    nic_slot = get_empty_nic_slot_outbound(nic);
-    if (nic_slot == NO_NIC_SLOT_AVAILABLE) return PACKET_REJECTED;
-    row = nic_slot / 64;
-    offset = nic_slot % 64;
+    // We will acquire the space in the data buffer for the packet.
+    // If this failes for any reason, we will release the metadata slot
+    // and return.
+    if (!acquire_buffer_space(nic_packet, nic)) return PACKET_REJECTED;
 
     // Write data to NIC buffer
-    memcpy(
-        &nic->packets[nic_slot],
-        pkt,
-        sizeof(PACKET)
-        );
+    __try {
+        memcpy(
+            nic_packet->location_in_buffer,
+            pkt,
+            nic_packet->bytes_in_buffer
+            );
+    }
 
-    // Set packet ready lock bit (interlocked compare exchange, again)
-    ready_bit = InterlockedBitTestAndSet64(
-        &nic->packet_ready_lock[row],
-        offset);
-    // This bit must be zero before this operation
-    ASSERT(!ready_bit);
+    // If the memcpy fails, then there must be a problem with the pointer
+    // passed in from the transport layer. We will reject the packet
+    // and return.
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        printf("Error copying from transport packet.\n");
+        nic_packet->status = EMPTY;
+        return PACKET_REJECTED;
+    }
 
-    // Signal the NIC->net thread
-    SetEvent(nic->packets_added_to_nic);
-
+    // Otherwise, we were able to successfully write the packet into the buffer.
+    // We will set the event, if necessary, to wake any waiting threads.
+    nic_packet->status = READY;
+    SetEvent(nic->packets_waiting_in_buffer);
     return PACKET_ACCEPTED;
 }
-
 
 /*
  * receive_packet
@@ -712,49 +635,61 @@ int send_packet(PPACKET pkt, int role) {
  * Receives a packet from the simulated network, waiting up to timeout_ms.
  */
 int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
-    if (pkt == NULL) {
-        return NO_PACKET_AVAILABLE;
-    }
 
-    if (role != ROLE_SENDER && role != ROLE_RECEIVER) {
-        return NO_PACKET_AVAILABLE;
-    }
+    // First, we check for all necessary validations
+    if (pkt == NULL)                                    return NO_PACKET_AVAILABLE;
+    if (role != ROLE_SENDER && role != ROLE_RECEIVER)   return NO_PACKET_AVAILABLE;
 
-    // Determine which network state you are in
-    PNETWORK_STATE n = &SR_net;
-    if (role == ROLE_SENDER) n = &RS_net;
-    PNETWORK_PACKET_BUFFER nic = &n->inbound_NIC;
-
-    // Create our stack variables
+    // Allocate all necessary stack variables
+    PNETWORK_STATE n;
+    PNETWORK_PACKET_BUFFER nic;
+    ULONG64 deadline;
     PBUFFER_PACKET_METADATA nic_packet;
 
+    // Then we determine which network state to select
+    n = &SR_net;
+    if (role == ROLE_SENDER) n = &RS_net;
+    nic = &n->inbound_NIC;
+
     // Keep track of time
-    ULONG64 deadline = time_now_ms() + timeout_ms;
+    deadline = time_now_ms() + timeout_ms;
 
     while (TRUE) {
 
         // Find an available packet in the NIC
-        nic_packet = try_get_nic_packet(nic);
+        nic_packet = try_get_packet_from_buffer(nic);
 
         // If we were able to get a packet,
         // then we will send its data up to the transport layer.
         if (nic_packet) {
+            ASSERT(nic_packet->status == READING);
+            __try {
+                // Copy the data to the given packet pointer
+                memcpy(
+                    pkt,
+                    nic_packet->location_in_buffer,
+                    nic_packet->bytes_in_buffer
+                    );
+            }
+            // If the memcopy fails, we assume a bad actor on the transport layer,
+            // And we reject the packet.
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                printf("Error copying data to transport packet\n");
+                // Free the slot in the buffer
+                nic_packet->status = EMPTY;
+                return PACKET_REJECTED;
+            }
 
-            // Copy the data to the given packet pointer
-            memcpy(
-                pkt,
-                nic_packet->location_in_buffer,
-                nic_packet->bytes_in_buffer
-                );
+            // Free the slot in the buffer
+            nic_packet->status = EMPTY;
 
-            // TODO Update the metadata and cursors to reflect that this slot is now available!
-
+            // Success! One packet was received. We can now return.
             return PACKET_RECEIVED;
         }
 
         // If no packets are available, we will wait for one.
-        ResetEvent(nic->packets_added_to_nic);
-        WaitForSingleObject(nic->packets_added_to_nic, NET_RETRY_MS);
+        ResetEvent(nic->packets_waiting_in_buffer);
+        WaitForSingleObject(nic->packets_waiting_in_buffer, NET_RETRY_MS);
 
         // Check for a timeout
         if (time_now_ms() > deadline) return NO_PACKET_AVAILABLE;
@@ -762,7 +697,6 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
         // If we don't have a timeout, then we will scan the NIC again!
     }
 }
-
 
 /*
  * try_receive_packet

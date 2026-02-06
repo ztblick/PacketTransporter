@@ -134,10 +134,11 @@
 #define NIC_BUFFER_CAPACITY_IN_BYTES      MB(1)
 
 // The default timeout for a network helper thread, in milliseconds
-#define NET_RETRY_MS                      5
-#define MAX_NIC_MISSES_BEFORE_SLEEP       NIC_BUFFER_CAPACITY
+#define NET_RETRY_MS                      (5)
+#define MAX_NIC_MISSES_BEFORE_SLEEP       (NIC_BUFFER_CAPACITY)
 
-#define NO_NIC_SLOT_AVAILABLE             (NULL)
+#define NO_BUFFER_SLOT_AVAILABLE          (NULL)
+#define NO_BUFFER_PACKET_AVAILABLE        (NULL)
 
 /* ============================================================================
  * FUNCTIONS
