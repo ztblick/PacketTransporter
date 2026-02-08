@@ -27,6 +27,7 @@ void create_receiver(void) {
     g_receiver_state.next_available_buffer_slot = 0;
 }
 
+//
 void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
     ULONG64 address_of_transmission_info = (ULONG64) &g_receiver_state.transmission_info_sparse_array[id];
     ULONG64 pageDataStartsOn = address_of_transmission_info & ~(PAGE_SIZE - 1);
