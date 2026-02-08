@@ -46,6 +46,9 @@ typedef struct {
     //      transmission is complete!
     HANDLE all_packets_received;
 
+    // this is the thread that processes packets in the cacheq
+    HANDLE receiver_thread;
+
 } RECEIVER_STATE, *PRECEIVER_STATE;
 
 extern RECEIVER_STATE g_receiver_state;
@@ -55,8 +58,12 @@ extern RECEIVER_STATE g_receiver_state;
  * When a packet arrives with a new and unique transmission ID,
  * this function will initialize its status bitmap as well as its
  * sparse array of data.
+ *
+ *@param id The unique transmission ID for this transmission.
+ * @param num_packets The number of packets that will be received for this transmission.
+ *
  */
-void init_received_transmission(void);
+void init_received_transmission(ULONG32 id, ULONG32 num_packets);
 
 /**
  * Called by main receiver thread.
