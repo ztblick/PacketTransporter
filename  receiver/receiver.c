@@ -36,8 +36,8 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
 
     VirtualAlloc( (LPVOID) pageDataStartsOn, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE, MEM_COMMIT, PAGE_READWRITE);
 
-    //TODO has a magic number of packet size works for now, will have to change if diff packets are added
-    g_receiver_state.transmission_info_sparse_array[id].transmission_data = VirtualAlloc(NULL, num_packets * 1024,  MEM_COMMIT, PAGE_READWRITE);
+
+    g_receiver_state.transmission_info_sparse_array[id].transmission_data = VirtualAlloc(NULL, num_packets * PACKET_SIZE,  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 
 
     ULONG64 numBitmaps;
@@ -49,13 +49,55 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
         numBitmaps = num_packets / 64 + 1;
     }
 
-    g_receiver_state.transmission_info_sparse_array[id].status_bitmap = VirtualAlloc(NULL, numBitmaps * sizeof(ULONG64),  MEM_COMMIT, PAGE_READWRITE);
+
+    //TODO this will be a bug above 32 gb, where more than a single page of bits is needed
+    g_receiver_state.transmission_info_sparse_array[id].status_bitmap = VirtualAlloc(NULL, numBitmaps * sizeof(ULONG64),   MEM_COMMIT, PAGE_READWRITE);
 
     if (num_packets % 64 != 0) {
         ULONG64 num_remaining_packets = num_packets % 64;
         // set the bits we do not need to 1
+
+
+
         g_receiver_state.transmission_info_sparse_array[id].status_bitmap[numBitmaps - 1] = ~((1ULL << (num_remaining_packets + 1)) - 1);
 
     }
 
+}
+
+/**
+ * Called by main receiver thread.
+ * This adds the packet's data to its corresponding transmission info.
+ * It will update the bitmap associated with the transmission and copy
+ * the data from the packet's payload into the transmission's data buffer.
+ */
+void document_received_transmission(PDATA_PACKET pkt) {
+    TRANSMISSION_INFO *transmission_info = &g_receiver_state.transmission_info_sparse_array[pkt->transmission_id];
+    ULONG64 packetNumber = pkt->index_in_transmission;
+
+
+
+    ULONG64 addressToWrite = (ULONG64) transmission_info->transmission_data + packetNumber * 1024;
+    ULONG64 pageDataStartsOn = addressToWrite & ~(PAGE_SIZE - 1);
+    ULONG64 pageDataEndsOn = (addressToWrite + PACKET_SIZE) & ~(PAGE_SIZE - 1);
+
+    VirtualAlloc( (LPVOID) pageDataStartsOn, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE, MEM_COMMIT, PAGE_READWRITE);
+
+
+    __try {
+        memcpy((PVOID) addressToWrite, &pkt->data, PACKET_SIZE);
+    }
+    //TODO discuss what should happen
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        printf("you failed at hacking");
+        exit(1);
+    }
+
+    // Set this right bit
+    ULONG64 bitmapIndex = packetNumber / 64;
+    LONG64 bitIndex = packetNumber % 64;
+
+    ULONG64 output;
+    output = _interlockedbittestandset64(&transmission_info->status_bitmap[bitmapIndex], bitIndex);
+    ASSERT(output == 0)
 }

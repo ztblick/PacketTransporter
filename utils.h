@@ -56,7 +56,7 @@ LARGE_INTEGER time_start;
 #define ACTIVE_EVENT_INDEX              1
 
 #define PAGE_SIZE                        4096
-
+#define PACKET_SIZE                      1024
 // Thread handles for starting and ending simulation
 HANDLE simulation_begin;
 HANDLE simulation_end;

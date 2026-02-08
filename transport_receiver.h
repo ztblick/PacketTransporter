@@ -21,6 +21,7 @@
 #define BUFFER_SIZE 128
 
 typedef struct {
+    // TODO discuss if we should make this volatile (I think so)
     PULONG64 status_bitmap;
     PVOID transmission_data;
 } TRANSMISSION_INFO, *PTRANSMISSION_INFO;
