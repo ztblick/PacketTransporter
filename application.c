@@ -63,7 +63,7 @@ void initialize_app_state(void) {
 
     memset(&app.lock_sent, 0, sizeof(ULONG64) * TRANSMISSION_LOCK_ROWS);
     memset(&app.lock_received, 0, sizeof(ULONG64) * TRANSMISSION_LOCK_ROWS);
-    memset(&app.transmission_info, 0, sizeof(TRANSMISSION_INFO) * MAX_TRANSMISSION_COUNT);
+    memset(&app.transmission_info, 0, sizeof(APP_TRANSMISSION_INFO) * MAX_TRANSMISSION_COUNT);
 }
 
 /*
@@ -77,7 +77,7 @@ void app_sender(void) {
     LONG64 row = 0;
     LONG64 offset = 0;
     LONG64 mask = 0;
-    PTRANSMISSION_INFO transmission;
+    PAPP_TRANSMISSION_INFO transmission;
     int status;
 
     // Wait for system start event before entering waiting state!
@@ -154,8 +154,8 @@ void app_receiver(void) {
 
     ULONG64 start_ms;
     ULONG64 end_ms;
-    TRANSMISSION_INFO transmission;
-    PTRANSMISSION_INFO info;
+    APP_TRANSMISSION_INFO transmission;
+    PAPP_TRANSMISSION_INFO info;
     int status;
     LONG64 row;
     LONG64 offset;
@@ -260,7 +260,7 @@ void print_stats(void) {
     PULONG_PTR end_sent;
     PULONG_PTR start_received;
     PULONG_PTR end_received;
-    PTRANSMISSION_INFO info;
+    PAPP_TRANSMISSION_INFO info;
 
     stats.transmissions_sent = app.transmissions_sent;
     stats.transmissions_received = app.transmissions_received;
@@ -340,7 +340,7 @@ void fill_transmission_with_pattern(PVOID data_in, size_t length) {
 
 void create_transmission_data(void) {
 
-    TRANSMISSION_INFO temp;
+    APP_TRANSMISSION_INFO temp;
 
     for (int i = 0; i < app.transmission_count; i++) {
 
@@ -360,7 +360,7 @@ void create_transmission_data(void) {
         memcpy(
             &app.transmission_info[i],
             &temp,
-            sizeof(TRANSMISSION_INFO)
+            sizeof(APP_TRANSMISSION_INFO)
             );
     }
 }
