@@ -177,6 +177,7 @@ PBUFFER_PACKET_METADATA try_get_packet_from_buffer(PNETWORK_PACKET_BUFFER buffer
     ULONG64 size = buffer->num_metadata_slots;
     LONG64 status_returned;
 
+    // TODO resolve bug here -- there are situations where this can get stuck.
     // If there are any packets available, we will attempt to grab the next one!
     while (write_slot != read_slot) {
 
@@ -196,7 +197,7 @@ PBUFFER_PACKET_METADATA try_get_packet_from_buffer(PNETWORK_PACKET_BUFFER buffer
         read_slot = buffer->metadata_read_slot;
     }
 
-    // If we cannot find an empty NIC slot, return NO_NIC_SLOT_AVAILABLE
+    // If there is no packet available in the buffer, we return that status.
     return NO_BUFFER_PACKET_AVAILABLE;
 }
 
@@ -233,7 +234,6 @@ BOOL acquire_buffer_space(  PBUFFER_PACKET_METADATA packet_metadata,
     // we want this slot to have a value for its pointer so the next
     // slot can build off of it.
     my_location = previous_packet->starting_address_in_buffer;
-    packet_metadata->starting_address_in_buffer = my_location;
 
     /**
      * Our packet will begin where the previous packet ends.
@@ -251,10 +251,15 @@ BOOL acquire_buffer_space(  PBUFFER_PACKET_METADATA packet_metadata,
 
     while (previous_packet->status == RESERVED) {
         attempts++;
-        if (attempts == MAX_ATTEMPTS) return FALSE;
+        if (attempts == MAX_ATTEMPTS) goto failure;
     }
 
-    my_location += previous_packet->packet_size_in_bytes;
+    // If the previous packet does not have a location (i.e. this is the first packet ever!)
+    // then we will initialize our pointer to the start of the buffer
+    if (previous_packet->starting_address_in_buffer == 0)
+        my_location = buffer->buffer_data;
+    else
+        my_location += previous_packet->packet_size_in_bytes;
 
     /**
      * Now that we know where we begin, we need to check a few things.
@@ -275,23 +280,29 @@ BOOL acquire_buffer_space(  PBUFFER_PACKET_METADATA packet_metadata,
     // First, we will handle the case where the packet is ahead of us in the buffer.
     if (read_start > my_location) {
         // If I overlap with the next packet, return false
-        if (my_location + my_size_in_bytes > read_start) return FALSE;
+        if (my_location + my_size_in_bytes > read_start) goto failure;
         // Otherwise, set the location and return true!
-        return TRUE;
+        goto success;
     }
 
     // Now, we know the read packet it behind us. In this case, we will check
     // to see if we fit in the buffer. If we do, then we return true!
     if (my_location + my_size_in_bytes <
-        buffer->buffer_data + buffer->buffer_size_in_bytes ) return TRUE;
+        buffer->buffer_data + buffer->buffer_size_in_bytes ) goto success;
 
     // Now the tricky case: we will check to see if we can wrap around.
     // If we can, then we reset our location in the buffer and return true.
     my_location = buffer->buffer_data;
-    if (my_location + my_size_in_bytes > read_start) return FALSE;
+    if (my_location + my_size_in_bytes > read_start) goto failure;
+    goto success;
 
-    packet_metadata->starting_address_in_buffer = my_location;
-    return TRUE;
+    success:
+        packet_metadata->starting_address_in_buffer = my_location;
+        return TRUE;
+
+    failure:
+        packet_metadata->starting_address_in_buffer = my_location;
+        return FALSE;
 }
 
 /**
@@ -627,8 +638,10 @@ int send_packet(PPACKET pkt, int role) {
     nic_packet = get_empty_buffer_slot(nic);
 
     // If no slots are available, reject the packet
-    if (!nic_packet) return PACKET_REJECTED;
-
+    if (!nic_packet) {
+        ASSERT(FALSE);
+        return PACKET_REJECTED;
+    }
     // Now we update our packet metadata with its total size -- this information is used to
     // determine if it can fit into the buffer.
     nic_packet->packet_size_in_bytes = total_packet_size_in_bytes;
@@ -639,6 +652,7 @@ int send_packet(PPACKET pkt, int role) {
     // and return.
     if (!acquire_buffer_space(nic_packet, nic)) {
         InterlockedExchange64(&nic_packet->status, EMPTY);
+        ASSERT(FALSE);
         return PACKET_REJECTED;
     }
 
@@ -657,6 +671,7 @@ int send_packet(PPACKET pkt, int role) {
     __except (EXCEPTION_EXECUTE_HANDLER) {
         printf("Error copying from transport packet.\n");
         InterlockedExchange64(&nic_packet->status, EMPTY);
+        ASSERT(FALSE);
         return PACKET_REJECTED;
     }
 
@@ -673,6 +688,7 @@ int send_packet(PPACKET pkt, int role) {
  *
  * Receives a packet from the simulated network, waiting up to timeout_ms.
  */
+// TODO we are failing to receive for some reason...
 int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
 
     // First, we check for all necessary validations
