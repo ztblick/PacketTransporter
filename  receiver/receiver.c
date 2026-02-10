@@ -50,7 +50,7 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
     }
 
 
-    //TODO this will be a bug above 32 gb, where more than a single page of bits is needed
+    //TODO this will be a bug above 32 MB, where more than a single page of bits is needed
     g_receiver_state.transmission_info_sparse_array[id].status_bitmap = VirtualAlloc(NULL, numBitmaps * sizeof(ULONG64),   MEM_COMMIT, PAGE_READWRITE);
 
     if (num_packets % 64 != 0) {

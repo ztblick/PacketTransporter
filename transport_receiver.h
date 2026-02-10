@@ -60,7 +60,7 @@ extern RECEIVER_STATE g_receiver_state;
  * this function will initialize its status bitmap as well as its
  * sparse array of data.
  *
- *@param id The unique transmission ID for this transmission.
+ * @param id The unique transmission ID for this transmission.
  * @param num_packets The number of packets that will be received for this transmission.
  *
  */
@@ -91,7 +91,6 @@ void create_receiver(void);
  */
 BYTE cache_packet(PDATA_PACKET pkt);
 
-// TODO ask Landy why we need a specific return type here
 /**
  * @par Woken by cache packet when packets are available to be processed.
  *      Sends ACKs and NACKs via comm packets.
