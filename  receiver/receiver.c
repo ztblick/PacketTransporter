@@ -57,11 +57,11 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
         ULONG64 num_remaining_packets = num_packets % 64;
         // set the bits we do not need to 1
 
-
-
         g_receiver_state.transmission_info_sparse_array[id].status_bitmap[numBitmaps - 1] = ~((1ULL << (num_remaining_packets + 1)) - 1);
 
     }
+    g_receiver_state.transmission_info_sparse_array[id].num_packets_left = num_packets;
+    g_receiver_state.transmission_info_sparse_array[id].transmission_complete_event = CreateEvent(NULL, AUTO_RESET, FALSE, NULL);
 
 }
 
@@ -100,4 +100,10 @@ void document_received_transmission(PDATA_PACKET pkt) {
     ULONG64 output;
     output = _interlockedbittestandset64(&transmission_info->status_bitmap[bitmapIndex], bitIndex);
     ASSERT(output == 0)
+
+    ULONG64 packetsLeft = InterlockedDecrement64(&transmission_info->num_packets_left);
+
+    if (packetsLeft == 0) {
+        SetEvent(transmission_info->transmission_complete_event);
+    }
 }

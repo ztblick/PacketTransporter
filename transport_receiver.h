@@ -24,6 +24,8 @@ typedef struct {
     // TODO discuss if we should make this volatile (I think so)
     PULONG64 status_bitmap;
     PVOID transmission_data;
+    volatile ULONG64 num_packets_left;
+    HANDLE transmission_complete_event;
 } TRANSMISSION_INFO, *PTRANSMISSION_INFO;
 
 typedef struct {
