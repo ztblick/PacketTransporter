@@ -152,65 +152,77 @@ void app_sender(void) {
  */
 void app_receiver(void) {
 
-    ULONG64 start_ms;
     ULONG64 end_ms;
-    TRANSMISSION_INFO transmission;
+    LONG64 slot = 0;
+    LONG64 row = 0;
+    LONG64 offset = 0;
+    LONG64 mask = 0;
     PTRANSMISSION_INFO info;
     int status;
-    LONG64 row;
-    LONG64 offset;
+    unsigned char result;
 
     // Wait for simulation start event
     WaitForSingleObject(simulation_begin, INFINITE);
 
-    start_ms = time_now_ms();
-    end_ms = start_ms + RECEIVER_TIMEOUT_MS;
+    // Set out timeout time
+    end_ms = time_now_ms() + RECEIVER_TIMEOUT_MS;
 
     // While there are still transmissions to receive AND we haven't timed out
     while (time_now_ms() < end_ms && app.transmissions_received < app.transmission_count) {
 
-        // Try calling receive transmission
-        status = receive_transmission(
-            &transmission.id,
-            &transmission.data_received,
-            &transmission.bytes_received,
-            RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT
-            );
-
-        // If unsuccessful, wait, then try again
-        if (status == NO_TRANSMISSION_AVAILABLE) continue;
-
-        ASSERT(transmission.id > 0 && transmission.id < app.transmission_count);
-        ASSERT(transmission.bytes_received > 0 && transmission.bytes_received <= MAX_TRANSMISSION_LIMIT_KB * KB(1));
-
-        row = transmission.id / 64;
-        offset = transmission.id % 64;
-
-        // Keep track of where in our global info this transmission's data belongs
-        info = &app.transmission_info[transmission.id];
-
-        // Acquire the lock
-        // If you can't acquire it, then someone else already received this transmission -- update receive count and continue
-        if (InterlockedBitTestAndSet64(
-            &app.lock_received[row],
-            offset
-            )) {
-            InterlockedIncrement64(&info->receive_count);
+        // Check the lock -- if it's totally 1s, move on to the next row
+        slot = slot % app.transmission_count;
+        row = slot / 64;
+        if (app.lock_received[row] == BITMAP_ROW_FULL_VALUE) {
+            slot = (row + 1) * 64;
             continue;
         }
 
-        // If successful -- update info!
-        info->time_received_ms = time_now_ms();
-        info->bytes_received = transmission.bytes_received;
-        info->status = RECEIVED;
-        memcpy(
-            info->data_received,
-            transmission.data_received,
-            transmission.bytes_received
+        // Check this bit -- if it's 1, move on to the next bit
+        offset = slot % 64;
+        mask = (1LL << offset);
+        if (app.lock_received[row] & mask) {
+            slot++;
+            continue;
+        }
+
+        // Okay, let's consider THIS particular transmission
+        info = &app.transmission_info[slot];
+
+        // Acquire the lock. If you can't, then someone else beat you to it!
+        if (InterlockedBitTestAndSet64(&app.lock_received[row], offset)) {
+            slot++;
+            continue;
+        }
+
+        // Try calling receive transmission
+        status = receive_transmission(
+            info->id,
+            &info->data_received,
+            &info->bytes_received,
+            RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT
             );
 
-        // increment received count
-        InterlockedIncrement64(&info->receive_count);
+        // If unsuccessful, release the lock on this transmission and try again
+        if (status == NO_TRANSMISSION_AVAILABLE) {
+            result = InterlockedBitTestAndReset64(&app.lock_received[row], offset);
+            ASSERT(result);
+            continue;
+        }
+
+        ASSERT(info->id > 0 && info->id < app.transmission_count);
+        ASSERT(info->bytes_received > 0 && info->bytes_received <= MAX_TRANSMISSION_LIMIT_KB * KB(1));
+
+        // If successful -- update info!
+        info->time_received_ms = time_now_ms();
+        info->status = RECEIVED;
+
+        // Increment received count for all transmissions
+        InterlockedIncrement16(&app.transmissions_received);
+
+        // Let's look for another transmission! Reset the timeout, since we were successful
+        slot++;
+        end_ms = time_now_ms() + RECEIVER_TIMEOUT_MS;
     }
 }
 

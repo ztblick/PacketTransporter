@@ -59,7 +59,7 @@ void free_transport_layer(void);
  */
 #define TRANSMISSION_ACCEPTED       0
 #define TRANSMISSION_REJECTED       1
-int send_transmission(uint32_t transmission_id, void* data, size_t length);
+int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length);
 
 
 /*
@@ -86,4 +86,4 @@ int send_transmission(uint32_t transmission_id, void* data, size_t length);
  */
 #define TRANSMISSION_RECEIVED       0
 #define NO_TRANSMISSION_AVAILABLE   1
-int receive_transmission(uint32_t* out_id, void* dest, size_t* out_length, int timeout_ms);
+int receive_transmission(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms);
