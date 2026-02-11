@@ -4,10 +4,70 @@
  * Network Layer Implementation
  */
 
-// TODO test new implementation of network layer using previous net_tester file.
-
 #include "network.h"
 #include "network_packets.h"
+
+
+/**
+ *  Network Layer Implementation
+ *
+ *  The network layer simulates three major players in the network:
+ *  two network cards (NICs) for the sender and receiver, and the network itself.
+ *  To simulate packets being sent from one machine to the other, we follow the following
+ *  states:
+ *
+ *  1. A transport-layer threads call send_packet().
+ *      If space is available in the outbound NIC, the packet is written into it.
+ *      Otherwise, the packet is rejected.
+ *
+ *  3. A network-layer thread moves packets from NIC to the network, timestamping with
+ *      "arrival" time at the other end of the network.
+ *
+ *  4. A network-layer thread moves packets that have "arrived" from the network to
+ *      the inbound NIC. If there is insufficient space in the inbound NIC, the
+ *      packet is dropped.
+ *
+ *  5. A transport-layer thread calls received_packet().
+ *      If there is a packet in the inbound NIC, its contents are copied to the
+ *      transport-layer target, then the NIC slot is cleared.
+ *
+ *  To facilitate this, we have two different data structures.
+ *
+ *  Since the network has only a single consuming thread and a single producing thread,
+ *  we use a ring buffer to save "in-flight" packets. This will have a read pointer and
+ *  write pointer to track the two relevant locations in the buffer. This also
+ *  organizes the packets in FIFO order, which most efficiently identifies whether
+ *  ANY packets have "arrived," making things more efficient for the net->NIC thread.
+ *
+ *  The NICs are a bit more complicated because they need to support concurrent calls
+ *  to send_packet() and receive_packet(). To synchronize these calls without locks, we
+ *  use a bitmap to track uniform slots of 1 KB buffer space. This also supports packets
+ *  of variable size.
+ *
+ *  For send_packet(), each inbound thread will calculate the number of 1 KB slots needed
+ *  for its packet. If it cannot reserve enough slots, the packet is rejected. Otherwise,
+ *  the slots are copied into a packet metadata struct (a PM). The PM maintains a list of
+ *  slots, their order, and the number of total bytes of data in the packet.
+ **/
+
+typedef struct slot_list_node {
+    UINT32 slot_number;
+    PVOID next;
+} SLN, *PSLN;
+
+typedef struct packet_metadata {
+
+} PM, *PPM;
+
+typedef struct bitmap_lock {
+    UINT32 num_rows;
+    PUINT32 bitmap;
+} BIT_LOCK, *PBIT_LOCK;
+
+
+UCHAR lock_slot(UINT32 slot_number, PBIT_LOCK lock);
+
+
 
 // These are our statuses for the metadata slots
 enum {EMPTY, RESERVED, WRITING, READY, READING};
