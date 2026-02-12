@@ -126,12 +126,9 @@
 /* Maximum packets each metwork buffer can hold.
  * Packets are dropped when buffer is full (which should not happpen).
  */
-#define NETWORK_BUFFER_TOTAL_PACKET_SLOTS KB(8)
-#define NETWORK_BUFFER_CAPACITY_IN_BYTES  MB(8)
+#define NETWORK_BUFFER_CAPACITY_IN_BYTES       MB(8)
+#define NETWORK_BUFFER_NUMBER_OF_1KB_SLOTS     ((NETWORK_BUFFER_CAPACITY_IN_BYTES + 1023) / KB(1))
 
-// Size of the network card on either machine. This is in terms of PACKETS.
-#define NIC_BUFFER_TOTAL_PACKET_SLOTS     KB(1)
-#define NIC_BUFFER_CAPACITY_IN_BYTES      MB(1)
 
 // The default timeout for a network helper thread, in milliseconds
 #define NET_RETRY_MS                      (5)
