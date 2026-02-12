@@ -11,119 +11,90 @@
 /**
  *  Network Layer Implementation
  *
- *  The network layer simulates three major players in the network:
- *  two network cards (NICs) for the sender and receiver, and the network itself.
- *  To simulate packets being sent from one machine to the other, we follow the following
- *  states:
+ *  The network layer simulates the movement through the network from
+ *  one machine to another. Packets enter and exit this layer following
+ *  this order:
  *
  *  1. A transport-layer threads call send_packet().
- *      If space is available in the outbound NIC, the packet is written into it.
- *      Otherwise, the packet is rejected.
+ *     If a PM and sufficient data slots cannot be reserved, then the packet
+ *     is rejected. Otherwise, the data is copied into the buffer and
+ *     timestamped with its "arrival time."
  *
- *  3. A network-layer thread moves packets from NIC to the network, timestamping with
- *      "arrival" time at the other end of the network.
+ *  2. The packets wait in the network buffer. At any point in time,
+ *     it is possible for the PM to be overwritten -- if the sender
+ *     sends too many packets too quickly OR if the receiver does not
+ *     pull packets off quickly enough -- then a new sending thread
+ *     can come in and overwrite its slot. In this case, the packet
+ *     is silently dropped and its data slots are repurposed or released.
  *
- *  4. A network-layer thread moves packets that have "arrived" from the network to
- *      the inbound NIC. If there is insufficient space in the inbound NIC, the
- *      packet is dropped.
- *
- *  5. A transport-layer thread calls received_packet().
- *      If there is a packet in the inbound NIC, its contents are copied to the
- *      transport-layer target, then the NIC slot is cleared.
- *
- *  To facilitate this, we have two different data structures.
- *
- *  Since the network has only a single consuming thread and a single producing thread,
- *  we use a ring buffer to save "in-flight" packets. This will have a read pointer and
- *  write pointer to track the two relevant locations in the buffer. This also
- *  organizes the packets in FIFO order, which most efficiently identifies whether
- *  ANY packets have "arrived," making things more efficient for the net->NIC thread.
- *
- *  The NICs are a bit more complicated because they need to support concurrent calls
- *  to send_packet() and receive_packet(). To synchronize these calls without locks, we
- *  use a bitmap to track uniform slots of 1 KB buffer space. This also supports packets
- *  of variable size.
- *
- *  For send_packet(), each inbound thread will calculate the number of 1 KB slots needed
- *  for its packet. If it cannot reserve enough slots, the packet is rejected. Otherwise,
- *  the slots are copied into a packet metadata struct (a PM). The PM maintains a list of
- *  slots, their order, and the number of total bytes of data in the packet.
+ *  3. A transport-layer thread calls received_packet().
+ *     If there is are no packets available in the buffer, this thread
+ *     will wait for a specified amount of time. If the time expires, it
+ *     will return an error code.
+ *     If there ARE packets ready in the buffer, this thread will copy
+ *     their data into the transport-layer packet, then free the PM and
+ *     its data slots before returning a success code.
  **/
 
+/**
+ * A SLN represents a node on a singly-linked list of slots.
+ * The list of slots is part of the PM struct, keeping track of
+ * all the slots that have been allocated for the packet.
+ **/
 typedef struct slot_list_node {
     UINT32 slot_number;
     PVOID next;
 } SLN, *PSLN;
 
+/**
+ * A PM struct encapsulates all the data for one packet. It has the
+ * list of the slots in the buffer that contain its data, as well
+ * as the total packet size. It also has a status (EMPTY, WRITING,
+ * READING, READY) as well as a lock on the slot.
+ */
 typedef struct packet_metadata {
-
+    SLN first_slot;
+    UINT32 number_of_slots_reserved;
+    UINT32 status;
+    CRITICAL_SECTION lock;
 } PM, *PPM;
 
+/**
+ * A Bitmap lock is used to reserve individual slots in the data buffer.
+ * The bits are grabbed using interlocked bit test and set. This supports
+ * lock-free concurrent access to the buffer and supports packets of
+ * variable sizes.
+ */
 typedef struct bitmap_lock {
-    UINT32 num_rows;
+    ULONG64 num_bits;
     PUINT32 bitmap;
 } BIT_LOCK, *PBIT_LOCK;
 
+/**
+ * The network struct keeps track of all data for one of the networks
+ * (sender->receiver and receiver->sender). This includes a bitmap lock,
+ * a set of PMs, and a buffer of packet data.
+ */
+typedef struct network {
+    BIT_LOCK net_lock;
+    PPM metadata_slots;
+    PBYTE packet_buffer;
+} NET, *PNET;
 
-UCHAR lock_slot(UINT32 slot_number, PBIT_LOCK lock);
+/**
+ * The network state keeps track of all global variables relevant to
+ * the entire network layer.
+ */
+typedef struct network_state {
+    PNET SRnet;
+    PNET RSnet;
+    BOOL initialized;
+} NET_STATE, *PNET_STATE;
 
+BOOL lock_slot(UINT32 slot_number, PBIT_LOCK lock);
 
-
-// These are our statuses for the metadata slots
+// These are our statuses for the PMs
 enum {EMPTY, RESERVED, WRITING, READY, READING};
-
-/*
- * Buffer entry objects - include packet and available time
- */
-typedef struct buffer_packet_metadata {
-    PBYTE starting_address_in_buffer;
-    ULONG64 packet_size_in_bytes;
-    volatile LONG64 status;
-    ULONG64 time_available;
-} BUFFER_PACKET_METADATA, *PBUFFER_PACKET_METADATA;
-
-/*
- * Network buffer: a contiguous region of memory into which packets are copied.
- * This structure is used to simulate the two network cards (NICs) as well as the network itself.
- * All packets are given a timestamp of current_time + latency as they enter the network.
- * This is used to determine the "arrival" time of the packet. This arrival time
- * determines when a packet is removed from the network buffer and moved to the inbound NIC
- * buffer.
- *
- * The implementation is a circular buffer. Packets can be of varying sizes. This is why
- * the metadata slots are used to facilitate access to the buffer data. When requesting
- * a slot for a packet, first a metadata slot is reserved. Then, if there is sufficient
- * space available in the buffer, a portion of the buffer will be reserved for the packet.
- * Its size and byte offset in the buffer are saved to the metadata.
- *
- * Atomic pointers to the buffer's read and write locations are maintained to facilitate access
- * and prevent race conditions. The same is true of the metadata slots.
- */
-typedef struct packet_buffer {
-
-    // This contains the metadata for all packets as they are added to the buffer.
-    PBUFFER_PACKET_METADATA metadata_slots;
-    ULONG64 num_metadata_slots;
-
-    // This contains the actual data for the packets
-    PBYTE buffer_data;
-    ULONG64 buffer_size_in_bytes;
-
-    /**
-     * These values are used to atomically track the locations in the buffers
-     * where threads can write into and read from. These are the variables most
-     * likely to experience contention, so we put them on separate cache lines to
-     * prevent false sharing.
-     **/
-    __declspec(align(64)) volatile ULONG64 metadata_write_slot;
-    __declspec(align(64)) volatile ULONG64 metadata_read_slot;
-
-    // When this buffer's event is set, a thread waiting for
-    // a packet is woken. This is a manual reset event, as
-    // threads should continue to consume packets until there are
-    // NONE left.
-    HANDLE packets_waiting_in_buffer;
-} NETWORK_PACKET_BUFFER, *PNETWORK_PACKET_BUFFER;
 
 /*
  *  Initialize a network buffer object.
@@ -154,27 +125,6 @@ void initialize_network_packet_buffer(PNETWORK_PACKET_BUFFER buffer,
         TEXT("PacketsAddedEvent")               // Event name
         );
 }
-
-/*
- *  Network state variable, encapsulating all information about the network.
- */
-typedef struct network_state {
-    // Sender -> Receiver Network
-    NETWORK_PACKET_BUFFER outbound_NIC;
-    NETWORK_PACKET_BUFFER network_buffer;
-    NETWORK_PACKET_BUFFER inbound_NIC;
-
-    // Thread handles
-    HANDLE nic_to_wire_thread;
-    HANDLE wire_to_nic_thread;
-
-    // Thread IDs
-    ULONG nic_to_wire_ID;
-    ULONG wire_to_nic_ID;
-
-    // State
-    BOOL initialized;
-} NETWORK_STATE, *PNETWORK_STATE;
 
 
 // Our state objects, keeping track of all relevant information for our two networks!
