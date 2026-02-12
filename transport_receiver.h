@@ -18,20 +18,21 @@
 
 // This defines the number of packets that are saved in the circular buffer.
 // Cache_packet writes into it and main receiver thread pulls from it.
-#define BUFFER_SIZE 128
+#define BUFFER_SIZE_IN_PACKETS 128
 
 typedef struct {
-    PULONG64 status_bitmap;
+
+    volatile PULONG64 status_bitmap;
     PVOID transmission_data;
+    volatile ULONG64 num_packets_left;
+    HANDLE transmission_complete_event;
 } TRANSMISSION_INFO, *PTRANSMISSION_INFO;
 
 typedef struct {
-    // This sparse array stores the transmission information for transmission ID #N at index N in the array.
-    PTRANSMISSION_INFO transmission_info_sparse_array;
 
     // This is the circular buffer that cache packet writes into
     // and the main thread reads from.
-    DATA_PACKET packet_space[BUFFER_SIZE];
+    DATA_PACKET packet_space[BUFFER_SIZE_IN_PACKETS];
     volatile UINT32 next_available_buffer_slot;
     volatile UINT32 buffer_slot_of_next_packet_to_process;
 
@@ -39,12 +40,18 @@ typedef struct {
     // when packets are added to the cache.
     HANDLE packets_waiting_in_cache;
 
-    // We will make this an auto reset event. All waiting application
-    // threads will wait on this event, and the one winning thread
-    // will get the completed transmission.
-    // TODO figure out how to tell the application thread which
-    //      transmission is complete!
-    HANDLE all_packets_received;
+
+
+} PACKET_CACHE, *PPACKET_CACHE;
+
+typedef struct {
+    // This sparse array stores the transmission information for transmission ID #N at index N in the array.
+    PTRANSMISSION_INFO transmission_info_sparse_array;
+
+    // this is the thread that processes packets in the cacheq
+    HANDLE receiver_thread;
+
+    PACKET_CACHE packet_cache;
 
 } RECEIVER_STATE, *PRECEIVER_STATE;
 
@@ -55,14 +62,19 @@ extern RECEIVER_STATE g_receiver_state;
  * When a packet arrives with a new and unique transmission ID,
  * this function will initialize its status bitmap as well as its
  * sparse array of data.
+ *
+ * @param id The unique transmission ID for this transmission.
+ * @param num_packets The number of packets that will be received for this transmission.
+ *
  */
-void init_received_transmission(void);
+void init_received_transmission(ULONG32 id, ULONG32 num_packets);
 
 /**
  * Called by main receiver thread.
  * This adds the packet's data to its corresponding transmission info.
  * It will update the bitmap associated with the transmission and copy
  * the data from the packet's payload into the transmission's data buffer.
+ * @pre assumed the transmission info is initialized
  */
 void document_received_transmission(PDATA_PACKET pkt);
 
@@ -83,7 +95,6 @@ void create_receiver(void);
  */
 BYTE cache_packet(PDATA_PACKET pkt);
 
-// TODO ask Landy why we need a specific return type here
 /**
  * @par Woken by cache packet when packets are available to be processed.
  *      Sends ACKs and NACKs via comm packets.
