@@ -1,12 +1,5 @@
-/*
- * network.c
- * 
- * Network Layer Implementation
- */
-
 #include "network.h"
 #include "network_packets.h"
-
 
 /**
  *  Network Layer Implementation
@@ -59,7 +52,7 @@ typedef struct slot_list_node {
  * extra slot list.
  */
 typedef struct packet_metadata {
-    volatile UINT32 status;
+    volatile LONG status;
     UINT32 number_of_slots_reserved;
     UINT32 slot_numbers[4];
     PSLN extra_slot_list;
@@ -85,6 +78,7 @@ typedef struct bitmap_lock {
 typedef struct network {
     BIT_LOCK net_lock;
     PPM metadata_slots;
+    PPM next_PM;
     PBYTE packet_buffer;
     HANDLE packets_present;
 } NET, *PNET;
@@ -101,8 +95,6 @@ typedef struct network_state {
 
 // This is our global net state variable, used to track all shared data.
 NET_STATE network_state;
-
-BOOL lock_slot(UINT32 slot_number, PBIT_LOCK lock);
 
 // These are our statuses for the PMs
 enum {FREE, WRITING, READY, READING};
@@ -144,6 +136,9 @@ VOID net_init(PNET n) {
                                      FALSE,                        // Initially the event is NOT set.
                                      TEXT("BeginSimulationEvent")  // Event name
                                     );
+
+    // Point the next_PM to the head of the PM array.
+    n->next_PM = n->metadata_slots;
 }
 
 void net_free(PNET n) {
@@ -177,8 +172,110 @@ void free_network_layer(void) {
     net_free(&network_state.RS_net);
 }
 
+BOOL lock_slot(UINT32 slot_number, PBIT_LOCK lock) {
+    // TODO complete the lock_slot function
+}
 
-PPM get_next_pm(PNET pnet);
+
+PPM get_next_pm(PNET net) {
+
+    LONG status;
+
+    // Check the next PM. If it's out of bounds, wrap
+    PPM pm = net->next_PM;
+
+    while (TRUE) {
+
+        // Get the status of the PM
+        status = pm->status;
+
+        // If the PM can be claimed, we will take it!
+        if (status == FREE || status == READY) {
+
+            // Try to atomically claim this slot
+            if (InterlockedCompareExchange(
+                &pm->status,
+                WRITING,
+                status) == status)
+            break;
+        }
+
+        // Move on to the next slot. If it's out of bounds, wrap.
+        pm++;
+        if (pm >= net->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS) pm = net->metadata_slots;
+    }
+
+    // Move next pm along to the slot after this one
+    net->next_PM = pm + 1;
+    if (net->next_PM >= net->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS) net->next_PM = net->metadata_slots;
+
+    return pm;
+}
+
+/**
+ * Reserve slots for the data. NOTE: if an insufficient number of slots are found (e.g. only 3 or 5),
+ * these slots are NOT released. That will happen later.
+ *
+ * It is important to update the number of slots reserved in the PM, as this field is used
+ * later on to free slots.
+ *
+ *
+ *
+ * @param pm The packet metadata struct into which we write the slots that are found.
+ * @param slots_needed The target number of slots.
+ */
+void acquire_slots(PPM pm, UINT32 slots_needed) {
+    // TODO complete the acquire_slots function
+}
+
+
+
+void release_all_slots(PPM pm) {
+    // TODO complete the release_all_slots function
+}
+
+/**
+ * Releases extra slots (relevant to the case where a PM is overwritten and its slots are claimed).
+ * @param pm The PM containing all relevant metadata
+ * @param slots_needed The total number of slots needed by this packet
+ */
+void release_extra_slots(PPM pm, UINT32 slots_needed) {
+    // TODO write the release extra slots function
+}
+
+
+
+/**
+ * @brief Finds and removes a packet that has "arrived" at the end of the network.
+ * @param pnet The network in which we scan for an available packet
+ * @param pm The pointer back to the caller's PM. If we find a packet to remove,
+ *          we will write the address of its PM here.
+ * @return If a packet is found, 0. Otherwise, the closest ETA.
+ */
+ULONG64 try_get_packet_from_buffer(PNET pnet, PPM* pm) {
+    // TODO Complete the get_packet_from_buffer function
+}
+
+
+/**
+ * @brief Copies the data from the packet into its slots, as given by the PM.
+ * @param pm The PM, containing all the slots necessary to write into.
+ * @param pkt The packet, whose data needs to be added to the network.
+ */
+void copy_packet_data_into_slots(PPM pm, PPACKET pkt) {
+    // TODO write the copy packet data into slots function
+}
+
+
+/**
+ * @brief Writes data from network slots into the given packet.
+ * @param pm The PM whose slots are ready to be written out
+ * @param pkt The packet, the destination for the PM's data
+ */
+void copy_from_slots_to_packet(PPM pm, PPACKET pkt) {
+    // TODO complete the write from slots to packet function
+}
+
 
 /*
  * send_packet
@@ -228,9 +325,10 @@ int send_packet(PPACKET pkt, int role) {
     slots_needed = (total_packet_size_in_bytes + NETWORK_BUFFER_SLOT_SIZE_IN_BYTES - 1)
                     / NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
 
-
-    // Find an available PM
+    // Find an available PM. This will always succeed, as it will claim the next PM, even if it is in
+    // its READY state.
     pm = get_next_pm(n);
+    ASSERT(pm->status == WRITING);
 
     // Now that we have a slot, we need to get data slots for it.
     acquire_slots(pm, slots_needed);
@@ -239,7 +337,7 @@ int send_packet(PPACKET pkt, int role) {
     // We will also release the PM, putting it back in its FREE state.
     if (pm->number_of_slots_reserved < slots_needed) {
         release_all_slots(pm);
-        set_pm_status(FREE);
+        pm->status = FREE;
         return PACKET_REJECTED;
     }
 
@@ -259,7 +357,7 @@ int send_packet(PPACKET pkt, int role) {
     __except (EXCEPTION_EXECUTE_HANDLER) {
         printf("Error copying from transport packet.\n");
         release_all_slots(pm);
-        set_pm_status(FREE);
+        pm->status = FREE;
         ASSERT(FALSE);
         return PACKET_REJECTED;
     }
@@ -268,6 +366,7 @@ int send_packet(PPACKET pkt, int role) {
     // and set its status as READY.
     pm->arrival_time = time_now_ms() + LATENCY_MS;
     pm->status = READY;
+    SetEvent(n->packets_present);
 
     return PACKET_ACCEPTED;
 }
@@ -277,7 +376,6 @@ int send_packet(PPACKET pkt, int role) {
  *
  * Receives a packet from the simulated network, waiting up to timeout_ms.
  */
-// TODO we are failing to receive for some reason...
 int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
 
     // First, we check for all necessary validations
@@ -285,15 +383,15 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
     if (role != ROLE_SENDER && role != ROLE_RECEIVER)   return NO_PACKET_AVAILABLE;
 
     // Allocate all necessary stack variables
-    PNETWORK_STATE n;
-    PNETWORK_PACKET_BUFFER nic;
+    PNET n;
+    PPM pm;
     ULONG64 deadline;
-    PBUFFER_PACKET_METADATA nic_packet;
+    ULONG64 closest_eta = MAXULONG64;
+    ULONG64 wait_time;
 
     // Then we determine which network state to select
-    n = &SR_net;
-    if (role == ROLE_SENDER) n = &RS_net;
-    nic = &n->inbound_NIC;
+    n = &network_state.SR_net;
+    if (role == ROLE_SENDER) n = &network_state.RS_net;
 
     // Keep track of time
     deadline = time_now_ms() + timeout_ms;
@@ -301,47 +399,48 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
     while (TRUE) {
 
         // Find an available packet in the NIC
-        nic_packet = try_get_packet_from_buffer(nic);
+        closest_eta = try_get_packet_from_buffer(n, &pm);
 
-        // If we were able to get a packet,
-        // then we will send its data up to the transport layer.
-        if (nic_packet) {
-            ASSERT(nic_packet->status == READING);
+        // If we were able to get a packet, then we will send its data up to the transport layer.
+        if (pm) {
+            ASSERT(pm->status == READING);
+
             __try {
-                // Copy the data to the given packet pointer
-                memcpy(
-                    pkt,
-                    nic_packet->starting_address_in_buffer,
-                    nic_packet->packet_size_in_bytes
-                    );
+                copy_from_slots_to_packet(pm, pkt);
             }
             // If the memcopy fails, we assume a bad actor on the transport layer,
             // And we reject the packet.
             __except (EXCEPTION_EXECUTE_HANDLER) {
                 printf("Error copying data to transport packet\n");
-                // We failed copying this packet's data, so we will change its status in the buffer.
-                InterlockedExchange64(&nic_packet->status, READY);
+                pm->status = READY;
+                ASSERT(FALSE);
                 return PACKET_REJECTED;
             }
 
-            // Now we must advance the read pointer in the buffer, as we are done with this packet!
-            InterlockedIncrement64((PLONG64) &nic->metadata_read_slot);
-
-            // Free the slot in the buffer
-            InterlockedExchange64(&nic_packet->status, EMPTY);
+            // Great! The data was written to the packet. Let's free the data slots and move
+            // the PM back into its FREE state
+            release_all_slots(pm);
+            pm->status = FREE;
 
             // Success! One packet was received. We can now return.
             return PACKET_RECEIVED;
         }
 
-        // If no packets are available, we will wait for one.
-        ResetEvent(nic->packets_waiting_in_buffer);
-        WaitForSingleObject(nic->packets_waiting_in_buffer, NET_RETRY_MS);
+        // If no packets in the network, we will reset our event.
+        if (closest_eta == MAXULONG64) {
+            ResetEvent(n->packets_present);
+        }
 
-        // Check for a timeout
+        // We will also set out wait time -- ideally, we will wake up JUST when the next packet has arrived.
+        wait_time = min(NET_RETRY_MS, max(0, closest_eta - time_now_ms()));
+
+        // And now we wait
+        WaitForSingleObject(n->packets_present, wait_time);
+
+        // After waking up, we check for a timeout
         if (time_now_ms() > deadline) return NO_PACKET_AVAILABLE;
 
-        // If we don't have a timeout, then we will scan the NIC again!
+        // If we don't have a timeout, then we will scan the buffer again!
     }
 }
 
