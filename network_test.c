@@ -26,9 +26,9 @@
  */
 #define NUM_PACKETS_SINGLE_THREADED     10
 
-#define TOTAL_PACKETS_MULTITHREADED     128
-#define NUM_SENDER_THREADS              2
-#define NUM_RECEIVER_THREADS            1
+#define TOTAL_PACKETS_MULTITHREADED     KB(8)
+#define NUM_SENDER_THREADS              4
+#define NUM_RECEIVER_THREADS            4
 #define PACKETS_PER_SENDER              (TOTAL_PACKETS_MULTITHREADED / NUM_SENDER_THREADS)
 
 
@@ -65,7 +65,6 @@ typedef struct data_packet {
  * Fills a packet with a predictable pattern based on packet_id.
  * This allows validation on the receive side.
  */
-// TODO fix me
 static void fill_packet_with_pattern(PDATA_PACKET pkt, uint32_t packet_id, uint32_t length) {
     pkt->bytes_in_header = BYTES_IN_HEADER_TEST;
     pkt->transmission_id = packet_id;

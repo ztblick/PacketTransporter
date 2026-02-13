@@ -237,6 +237,7 @@ void add_slot(PPM pm, ULONG64 slot) {
     current->slot_numbers[slot_count] = slot;
     current->number_of_slots_reserved_at_node++;
     pm->number_of_slots_reserved++;
+    ASSERT(pm->number_of_slots_reserved <= MAX_PAYLOAD_SIZE / NETWORK_BUFFER_SLOT_SIZE_IN_BYTES + 1);
 }
 
 /**
@@ -252,6 +253,9 @@ void add_slot(PPM pm, ULONG64 slot) {
 void acquire_slots(PPM pm, UINT32 slots_needed, PNET net) {
 
     UINT32 current_slot_count = pm->number_of_slots_reserved;
+
+    if(current_slot_count >= slots_needed) return;
+
     ULONG64 num_slots = net->net_lock.num_bits;
     PULONG64 bitmap_start = net->net_lock.bitmap;
     PULONG64 bitmap_end = (PULONG64) ((ULONG_PTR) bitmap_start + (num_slots + 7) / 8);
