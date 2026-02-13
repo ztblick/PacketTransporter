@@ -29,14 +29,16 @@
  *     its data slots before returning a success code.
  **/
 
+
+#define SLOTS_PER_LAYER 4
 /**
  * A SLN represents a node on a singly-linked list of slots.
  * The list of slots is part of the PM struct, keeping track of
  * all the slots that have been allocated for the packet.
  **/
 typedef struct slot_list_node {
-    UINT32 number_of_slots_reserved;
-    UINT32 slot_numbers[4];
+    UINT32 number_of_slots_reserved_at_node;
+    UINT32 slot_numbers[SLOTS_PER_LAYER];
     PVOID next;
 } SLN, *PSLN;
 
@@ -54,8 +56,7 @@ typedef struct slot_list_node {
 typedef struct packet_metadata {
     volatile LONG status;
     UINT32 number_of_slots_reserved;
-    UINT32 slot_numbers[4];
-    PSLN extra_slot_list;
+    SLN slots;
     ULONG64 arrival_time;
 } PM, *PPM;
 
@@ -67,7 +68,7 @@ typedef struct packet_metadata {
  */
 typedef struct bitmap_lock {
     ULONG64 num_bits;
-    PUINT32 bitmap;
+    volatile PULONG64 bitmap;
 } BIT_LOCK, *PBIT_LOCK;
 
 /**
@@ -78,7 +79,7 @@ typedef struct bitmap_lock {
 typedef struct network {
     BIT_LOCK net_lock;
     PPM metadata_slots;
-    PPM next_PM;
+    volatile PPM next_PM;
     PBYTE packet_buffer;
     HANDLE packets_present;
 } NET, *PNET;
@@ -144,7 +145,7 @@ VOID net_init(PNET n) {
 void net_free(PNET n) {
 
     free(n->net_lock.bitmap);
-    free(n->metadata_slots);
+    free(n->metadata_slots);    // TODO free all nodes in the slot lists
     VirtualFree(
                     n->packet_buffer,
             0,
@@ -206,10 +207,37 @@ PPM get_next_pm(PNET net) {
     }
 
     // Move next pm along to the slot after this one
-    net->next_PM = pm + 1;
-    if (net->next_PM >= net->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS) net->next_PM = net->metadata_slots;
+    pm++;
+    if (pm >= net->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS) pm = net->metadata_slots;
+    InterlockedExchangePointer((PVOID) &net->next_PM, pm);
 
     return pm;
+}
+
+/**
+ * @brief Assigns the given slot to the given PM.
+ * @param pm The PM to be given this slot
+ * @param slot The slot to give
+ */
+void add_slot(PPM pm, ULONG64 slot) {
+    PSLN current = &pm->slots;
+    PSLN next = current->next;
+    UINT32 slot_count = current->number_of_slots_reserved_at_node;
+
+    // Traverse through the slot list, if necessary, until reaching a level with available slots.
+    while (slot_count >= SLOTS_PER_LAYER) {
+
+        if (!next) next = zero_malloc(sizeof(SLN));     // TODO chat with Landy about this.
+        if (!next) ASSERT(FALSE);
+
+        current = next;
+        next = current->next;
+        slot_count = current->number_of_slots_reserved_at_node;
+    }
+
+    current->slot_numbers[slot_count] = slot;
+    current->number_of_slots_reserved_at_node++;
+    pm->number_of_slots_reserved++;
 }
 
 /**
@@ -219,13 +247,57 @@ PPM get_next_pm(PNET net) {
  * It is important to update the number of slots reserved in the PM, as this field is used
  * later on to free slots.
  *
- *
- *
  * @param pm The packet metadata struct into which we write the slots that are found.
  * @param slots_needed The target number of slots.
  */
-void acquire_slots(PPM pm, UINT32 slots_needed) {
-    // TODO complete the acquire_slots function
+void acquire_slots(PPM pm, UINT32 slots_needed, PNET net) {
+
+    UINT32 current_slot_count = pm->number_of_slots_reserved;
+    ULONG64 num_slots = net->net_lock.num_bits;
+    PULONG64 bitmap_start = net->net_lock.bitmap;
+    PULONG64 bitmap_end = (PULONG64) ((ULONG_PTR) bitmap_start + (num_slots + 7) / 8);
+    volatile PULONG64 row = bitmap_start;
+    BOOL result;
+
+    ULONG64 slot = 0;
+    ULONG64 offset = 0;
+    ULONG64 mask = 0;
+
+    while (row < bitmap_end) {
+
+        // Update our variables
+        offset = slot % 64;
+        mask = (1ULL << offset);
+
+        // Skip the whole row if it is all set
+        if (*row == BITMAP_ROW_FULL_VALUE) {
+            row++;
+            slot += (64 - (slot % 64));
+            continue;
+        }
+
+        // Skip the bit if it is set
+        if (*row & mask) {
+            slot++;
+            if (slot % 64 == 0) row++;
+            continue;
+        }
+
+        // If we can set this bit before anyone else, then we have reserved this slot.
+        // We will add it to our stash of slots. And if it's the last one we need, we will return!
+        result = InterlockedBitTestAndSet64((PLONG64) row, offset);
+        if (!result) {
+            add_slot(pm, slot);
+            current_slot_count++;
+            if (current_slot_count == slots_needed) return;
+        }
+
+        slot++;
+        if (slot % 64 == 0) row++;
+    }
+
+    // Even if we do not get enough slots, we will return. And it's up to the caller to sort out
+    // the situation where insufficient slots were allocated.
 }
 
 
@@ -331,7 +403,7 @@ int send_packet(PPACKET pkt, int role) {
     ASSERT(pm->status == WRITING);
 
     // Now that we have a slot, we need to get data slots for it.
-    acquire_slots(pm, slots_needed);
+    acquire_slots(pm, slots_needed, n);
 
     // If there are not enough available, we will release those slots and return.
     // We will also release the PM, putting it back in its FREE state.
