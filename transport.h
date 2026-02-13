@@ -39,7 +39,7 @@ void create_transport_layer(void);
  */
 void free_transport_layer(void);
 
-/*
+/**
  * send_transmission
  *
  * Reliably sends data to the receiver.
@@ -56,6 +56,17 @@ void free_transport_layer(void);
  * Notes:
  *   - Must break data into packets, each tagged with transmission_id
  *   - Should return only after transmission is complete or has failed
+ *
+ *
+ *  When this function is called, we execute these steps in this order:
+ *  1. We create a batch of packets from the transmission
+ *  2. We send that batch
+ *  3. We wait LATENCY_MS amount of time OR for the sender-listener to wake us
+ *  4. We check our bitmap of ACKS
+ *  5. If we need to re-send any packets, we will and we will repeat step 3.
+ *  6. Otherwise, we move on to the next batch.
+ *
+ *
  */
 #define TRANSMISSION_ACCEPTED       0
 #define TRANSMISSION_REJECTED       1
