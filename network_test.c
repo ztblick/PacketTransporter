@@ -27,7 +27,7 @@
 #define NUM_PACKETS_SINGLE_THREADED     10
 
 #define TOTAL_PACKETS_MULTITHREADED     128
-#define NUM_SENDER_THREADS              1
+#define NUM_SENDER_THREADS              2
 #define NUM_RECEIVER_THREADS            1
 #define PACKETS_PER_SENDER              (TOTAL_PACKETS_MULTITHREADED / NUM_SENDER_THREADS)
 
@@ -187,7 +187,7 @@ static int test_single_threaded(void) {
 
 /* Shared state for tracking received packets */
 static CRITICAL_SECTION g_received_lock;
-static int g_received_flags[TOTAL_PACKETS_MULTITHREADED];  /* 1 = received and valid */
+static int g_received_flags[TOTAL_PACKETS_MULTITHREADED + 1];  /* 1 = received and valid */
 static volatile LONG g_packets_received = 0;
 static volatile LONG g_packets_validated = 0;
 
@@ -199,6 +199,7 @@ static volatile LONG g_packets_validated = 0;
  */
 static DWORD WINAPI sender_thread_func(LPVOID param) {
     int thread_index = (int)(intptr_t)param;
+    ASSERT(thread_index >= 0);
     DATA_PACKET pkt;
 
     /* Calculate packet ID range for this thread */
@@ -206,9 +207,10 @@ static DWORD WINAPI sender_thread_func(LPVOID param) {
 
     for (int i = 0; i < PACKETS_PER_SENDER; i++) {
 
-        uint32_t packet_id = (uint32_t)(start_id + i);
+        uint32_t packet_id = (uint32_t)(start_id + i + 1);
+        uint32_t length = (i + 1) % MAX_PAYLOAD_SIZE;
 
-        fill_packet_with_pattern(&pkt, packet_id, MAX_PAYLOAD_SIZE);
+        fill_packet_with_pattern(&pkt, packet_id, length);
 
         int result = send_packet((PPACKET) &pkt, ROLE_SENDER);
         if (result != PACKET_ACCEPTED) {
@@ -227,6 +229,7 @@ static DWORD WINAPI sender_thread_func(LPVOID param) {
  */
 static DWORD WINAPI receiver_thread_func(LPVOID param) {
     int thread_index = (int)(intptr_t)param;
+    ASSERT(thread_index >= 0);
     DATA_PACKET pkt;
 
     while (g_packets_received < TOTAL_PACKETS_MULTITHREADED) {
@@ -241,7 +244,7 @@ static DWORD WINAPI receiver_thread_func(LPVOID param) {
 
             /* Mark packet as received (for duplicate detection) */
             uint32_t packet_id = pkt.transmission_id;
-            if (packet_id < TOTAL_PACKETS_MULTITHREADED) {
+            if (packet_id <= TOTAL_PACKETS_MULTITHREADED) {
                 EnterCriticalSection(&g_received_lock);
                 if (g_received_flags[packet_id]) {
                     printf("  Receiver %d: DUPLICATE packet %u\n", thread_index, packet_id);
@@ -335,7 +338,7 @@ static int test_multi_threaded(void) {
 
     /* Check for missing packets */
     int missing_count = 0;
-    for (int i = 0; i < TOTAL_PACKETS_MULTITHREADED; i++) {
+    for (int i = 1; i <= TOTAL_PACKETS_MULTITHREADED; i++) {
         if (!g_received_flags[i]) {
             printf("  MISSING packet %d\n", i + 1);
             missing_count++;
