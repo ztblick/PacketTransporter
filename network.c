@@ -56,6 +56,7 @@ typedef struct slot_list_node {
 typedef struct packet_metadata {
     volatile LONG status;
     UINT32 number_of_slots_reserved;
+    ULONG64 total_size_in_bytes;
     SLN slots;
     ULONG64 arrival_time;
 } PM, *PPM;
@@ -292,7 +293,11 @@ void acquire_slots(PPM pm, UINT32 slots_needed, PNET net) {
         if (!result) {
             add_slot(pm, slot);
             current_slot_count++;
-            if (current_slot_count == slots_needed) return;
+
+            if (current_slot_count == slots_needed) {
+                pm->number_of_slots_reserved = current_slot_count;
+                return;
+            }
         }
 
         slot++;
@@ -323,16 +328,19 @@ void release_all_slots(PPM pm, PNET net) {
     UINT32 slot;
 
     while (TRUE) {
-        ASSERT(slots_to_release <= SLOTS_PER_LAYER && slots_to_release > 0);
+
+        if (slots_to_release == 0) break;
+        ASSERT(slots_to_release <= SLOTS_PER_LAYER);
+
         slot = current->slot_numbers[slots_to_release - 1];
         release_slot(net->net_lock.bitmap, slot);
         slots_to_release--;
 
         if (slots_to_release != 0) continue;
+        current->number_of_slots_reserved_at_node = 0;
 
         if (!next) break;
 
-        current->number_of_slots_reserved_at_node = 0;
         current = next;
         next = current->next;
         slots_to_release = current->number_of_slots_reserved_at_node;
@@ -351,40 +359,36 @@ void release_extra_slots(PPM pm, UINT32 slots_needed, PNET net) {
     UINT32 slots_to_keep = slots_needed;
     UINT32 slots_to_release = pm->number_of_slots_reserved - slots_needed;
     UINT32 slots_checked_so_far = 0;
-
+    UINT32 index;
     PSLN current = &pm->slots;
 
-    while (TRUE) {
-
-        if (slots_checked_so_far + current->number_of_slots_reserved_at_node < slots_to_keep) {
-            slots_checked_so_far += current->number_of_slots_reserved_at_node;
-            current = current->next;
-            continue;
-        }
-
-        if (slots_checked_so_far < slots_to_keep) {
-            slots_checked_so_far++;
-            continue;
-        }
-
-        break;
+    // While we have full layers to keep, move down the list
+    while (current->number_of_slots_reserved_at_node == SLOTS_PER_LAYER &&
+        slots_to_keep - slots_checked_so_far >= SLOTS_PER_LAYER) {
+        slots_checked_so_far += SLOTS_PER_LAYER;
+        current = current->next;
     }
 
-    UINT32 index;
+    ASSERT(slots_to_keep - slots_checked_so_far < SLOTS_PER_LAYER);
+
+    index = slots_to_keep - slots_checked_so_far;
 
     while (TRUE) {
 
         if (slots_checked_so_far == slots_to_keep + slots_to_release) break;
 
-        index = slots_checked_so_far % SLOTS_PER_LAYER;
         release_slot(net->net_lock.bitmap, current->slot_numbers[index]);
+        index++;
 
-        if (index == SLOTS_PER_LAYER - 1) {
+        if (index == SLOTS_PER_LAYER) {
             current = current->next;
+            index = 0;
         }
 
         slots_checked_so_far++;
     }
+
+    pm->number_of_slots_reserved = slots_needed;
 }
 
 
@@ -435,23 +439,49 @@ void copy_packet_data_into_slots(PPM pm, PPACKET pkt, PNET net) {
     UINT32 slot;
     UINT32 index = 0;
     UINT32 num_copies = pm->number_of_slots_reserved;
+    ULONG64 total_bytes_to_copy = pm->total_size_in_bytes;
+    UINT32 bytes_to_copy_for_this_slot = 0;
+
 
     while (TRUE) {
 
+        // First, we grab the next slot to find its corresponding offset in the buffer
         slot = current->slot_numbers[index];
-
         dest = net->packet_buffer + slot * NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
 
-        memcpy(dest, src, NETWORK_BUFFER_SLOT_SIZE_IN_BYTES);
+        // We assume we need to copy the whole slot. But if we don't need it all, we only
+        // copy what we need.
+        bytes_to_copy_for_this_slot = NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
+        if (total_bytes_to_copy < NETWORK_BUFFER_SLOT_SIZE_IN_BYTES) {
+            bytes_to_copy_for_this_slot = total_bytes_to_copy;
+        }
 
-        src += NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
+        // Decrement our running total by the amount we are about to copy.
+        total_bytes_to_copy -= bytes_to_copy_for_this_slot;
+
+        // We copy our data into the slot
+        __try {
+            memcpy(dest, src, bytes_to_copy_for_this_slot);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            ASSERT(FALSE);
+        }
 
         num_copies--;
 
-        if (num_copies == 0) break;
+        // If we have finished our last copy, we break and return!
+        if (num_copies == 0) {
+            ASSERT(total_bytes_to_copy == 0);
+            return;
+        }
 
+        ASSERT(bytes_to_copy_for_this_slot == NETWORK_BUFFER_SLOT_SIZE_IN_BYTES);
+
+        // Advance the pointer as well as the slot index
+        src += bytes_to_copy_for_this_slot;
         index++;
 
+        // If we have finished up a layer in the slot list, move on to the next layer
         if (index == SLOTS_PER_LAYER) {
             index = 0;
             current = next;
@@ -475,23 +505,45 @@ void copy_from_slots_to_packet(PPM pm, PPACKET pkt, PNET net) {
     UINT32 slot;
     UINT32 index = 0;
     UINT32 num_copies = pm->number_of_slots_reserved;
+    ULONG64 bytes_left_to_copy = pm->total_size_in_bytes;
+    UINT32 bytes_to_copy_for_this_slot = 0;
 
     while (TRUE) {
 
+        // Find the location in the buffer corresponding with this slot
         slot = current->slot_numbers[index];
-
         src = net->packet_buffer + slot * NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
 
-        memcpy(dest, src, NETWORK_BUFFER_SLOT_SIZE_IN_BYTES);
+        // Calculate the size of the copy
+        bytes_to_copy_for_this_slot = NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
+        if (bytes_left_to_copy < NETWORK_BUFFER_SLOT_SIZE_IN_BYTES) {
+            bytes_to_copy_for_this_slot = bytes_left_to_copy;
+        }
 
-        dest += NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
+        // Decrement our running total by the amount we are about to copy.
+        bytes_left_to_copy -= bytes_to_copy_for_this_slot;
 
+        // We copy our data into the slot
+        __try{
+            memcpy(dest, src, bytes_to_copy_for_this_slot);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) {
+            ASSERT(FALSE);
+        }
+
+        // If we have done the final copy, we are good to go!
         num_copies--;
+        if (num_copies == 0) {
+            ASSERT(bytes_left_to_copy == 0);
+            return;
+        }
 
-        if (num_copies == 0) break;
-
+        // Move the destination pointer along and move on to the next slot
+        ASSERT(bytes_to_copy_for_this_slot == NETWORK_BUFFER_SLOT_SIZE_IN_BYTES);
+        dest += bytes_to_copy_for_this_slot;
         index++;
 
+        // If we have completed a slot layer, move on to the next one
         if (index == SLOTS_PER_LAYER) {
             index = 0;
             current = next;
@@ -553,8 +605,9 @@ int send_packet(PPACKET pkt, int role) {
     // its READY state.
     pm = get_next_pm(n);
     ASSERT(pm->status == WRITING);
+    pm->total_size_in_bytes = total_packet_size_in_bytes;
 
-    // Now that we have a slot, we need to get data slots for it.
+    // Now that we have a PM, we need to get data slots for it.
     acquire_slots(pm, slots_needed, n);
 
     // If there are not enough available, we will release those slots and return.
@@ -567,24 +620,26 @@ int send_packet(PPACKET pkt, int role) {
 
     // When we claimed this PM, it is possible we took one in its READY state. If that was the case,
     // we already have some number of slots reserved. We need to see if it is too many, and free the extras.
-    else if (pm->number_of_slots_reserved > slots_needed) {
+    if (pm->number_of_slots_reserved > slots_needed) {
         release_extra_slots(pm, slots_needed, n);
     }
 
+    ASSERT(pm->number_of_slots_reserved == slots_needed);
+
     // Great! We have all necessary slots. Let's write our data into the memory buffer
-    __try {
+    // __try {
         copy_packet_data_into_slots(pm, pkt, n);
-    }
+    // }
     // If the memcpy fails, then there must be a problem with the pointer
     // passed in from the transport layer. We will reject the packet
     // and return.
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        printf("Error copying from transport packet.\n");
-        release_all_slots(pm, n);
-        pm->status = FREE;
-        ASSERT(FALSE);
-        return PACKET_REJECTED;
-    }
+    // __except (EXCEPTION_EXECUTE_HANDLER) {
+    //     printf("Error copying from transport packet.\n");
+    //     release_all_slots(pm, n);
+    //     pm->status = FREE;
+    //     ASSERT(FALSE);
+    //     return PACKET_REJECTED;
+    // }
 
     // The packet has been added to the network. Now we will timestamp it with its arrival time
     // and set its status as READY.
@@ -628,18 +683,19 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
         // If we were able to get a packet, then we will send its data up to the transport layer.
         if (closest_eta == 0) {
             ASSERT(pm->status == READING);
+            ASSERT(pm->total_size_in_bytes > 0);
 
-            __try {
+            // __try {
                 copy_from_slots_to_packet(pm, pkt, n);
-            }
+            // }
             // If the memcopy fails, we assume a bad actor on the transport layer,
             // And we reject the packet.
-            __except (EXCEPTION_EXECUTE_HANDLER) {
-                printf("Error copying data to transport packet\n");
-                pm->status = READY;
-                ASSERT(FALSE);
-                return PACKET_REJECTED;
-            }
+            // __except (EXCEPTION_EXECUTE_HANDLER) {
+            //     printf("Error copying data to transport packet\n");
+            //     pm->status = READY;
+            //     ASSERT(FALSE);
+            //     return PACKET_REJECTED;
+            // }
 
             // Great! The data was written to the packet. Let's free the data slots and move
             // the PM back into its FREE state

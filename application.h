@@ -37,8 +37,6 @@
 #define RECEIVER_TIMEOUT_MS                     5000
 #define RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT    50
 
-#define BITMAP_ROW_FULL_VALUE       (~0ULL)
-
 typedef struct transmission_info {
     PVOID data_sent;
     PVOID data_received;
