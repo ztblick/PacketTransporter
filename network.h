@@ -126,7 +126,7 @@
 /* Maximum packets each metwork buffer can hold.
  * Packets are dropped when buffer is full (which should not happpen).
  */
-#define NETWORK_BUFFER_CAPACITY_IN_BYTES       (MB(8))
+#define NETWORK_BUFFER_CAPACITY_IN_BYTES       (MB(16))
 #define NETWORK_BUFFER_SLOT_SIZE_IN_BYTES      (KB(1))
 #define NETWORK_BUFFER_NUMBER_OF_SLOTS         ((NETWORK_BUFFER_CAPACITY_IN_BYTES + (NETWORK_BUFFER_SLOT_SIZE_IN_BYTES - 1)) / NETWORK_BUFFER_SLOT_SIZE_IN_BYTES)
 
@@ -141,6 +141,7 @@
 #define MAX_ATTEMPTS                      20
 
 #define BITMAP_ROW_FULL_VALUE             MAXULONG64
+#define TIMES_TO_SCAN_BITMAP_BEFORE_EXIT  1
 
 /* ============================================================================
  * FUNCTIONS

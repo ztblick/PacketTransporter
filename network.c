@@ -29,6 +29,14 @@
  *     its data slots before returning a success code.
  **/
 
+#if DEBUG
+typedef struct {
+    ULONG64 packets_dropped_for_lack_of_slots;
+    ULONG64 pms_overwritten;
+} DEBUG_INFO;
+
+DEBUG_INFO debug_info;
+#endif
 
 #define SLOTS_PER_LAYER 4
 /**
@@ -101,6 +109,11 @@ NET_STATE network_state;
 // These are our statuses for the PMs
 enum {FREE, WRITING, READY, READING};
 
+#if DEBUG
+void init_debug_info(void) {
+    memset(&debug_info, 0, sizeof(DEBUG_INFO));
+}
+#endif
 /**
  *  Initialize the given network.
  **/
@@ -138,6 +151,11 @@ VOID net_init(PNET n) {
 
     // Point the next_PM to the head of the PM array.
     n->next_PM = n->metadata_slots;
+
+
+#if DEBUG
+    init_debug_info();
+#endif
 }
 
 void net_free(PNET n) {
@@ -169,6 +187,11 @@ void free_network_layer(void) {
     network_state.initialized = FALSE;
     net_free(&network_state.SR_net);
     net_free(&network_state.RS_net);
+
+#if DEBUG
+    printf("Packets dropped for lack of slots: %llu\n", debug_info.packets_dropped_for_lack_of_slots);
+    printf("PMs overwritten due to full buffer: %llu\n", debug_info.pms_overwritten);
+#endif
 }
 
 /**
@@ -194,11 +217,12 @@ PPM get_next_pm(PNET net) {
         if (status == FREE || status == READY) {
 
             // Try to atomically claim this slot
-            if (InterlockedCompareExchange(
-                &pm->status,
-                WRITING,
-                status) == status)
-            break;
+            if (InterlockedCompareExchange(&pm->status, WRITING, status) == status) {
+#if DEBUG
+                if (status == READY) debug_info.pms_overwritten++;
+                #endif
+                break;
+            }
         }
 
         // Move on to the next slot. If it's out of bounds, wrap.
@@ -260,48 +284,50 @@ void acquire_slots(PPM pm, UINT32 slots_needed, PNET net) {
     ULONG64 num_slots = net->net_lock.num_bits;
     PULONG64 bitmap_start = net->net_lock.bitmap;
     PULONG64 bitmap_end = (PULONG64) ((ULONG_PTR) bitmap_start + (num_slots + 7) / 8);
-    volatile PULONG64 row = bitmap_start;
     BOOL result;
 
-    ULONG64 slot = 0;
-    ULONG64 offset = 0;
-    ULONG64 mask = 0;
+    for (int i = 0; i < TIMES_TO_SCAN_BITMAP_BEFORE_EXIT; i++) {
+        ULONG64 slot = 0;
+        ULONG64 offset = 0;
+        ULONG64 mask = 0;
+        volatile PULONG64 row = bitmap_start;
 
-    while (row < bitmap_end) {
+        while (row < bitmap_end) {
 
-        // Update our variables
-        offset = slot % 64;
-        mask = (1ULL << offset);
+            // Update our variables
+            offset = slot % 64;
+            mask = (1ULL << offset);
 
-        // Skip the whole row if it is all set
-        if (*row == BITMAP_ROW_FULL_VALUE) {
-            row++;
-            slot += (64 - (slot % 64));
-            continue;
-        }
+            // Skip the whole row if it is all set
+            if (*row == BITMAP_ROW_FULL_VALUE) {
+                row++;
+                slot += (64 - (slot % 64));
+                continue;
+            }
 
-        // Skip the bit if it is set
-        if (*row & mask) {
+            // Skip the bit if it is set
+            if (*row & mask) {
+                slot++;
+                if (slot % 64 == 0) row++;
+                continue;
+            }
+
+            // If we can set this bit before anyone else, then we have reserved this slot.
+            // We will add it to our stash of slots. And if it's the last one we need, we will return!
+            result = InterlockedBitTestAndSet64((PLONG64) row, offset);
+            if (!result) {
+                add_slot(pm, slot);
+                current_slot_count++;
+
+                if (current_slot_count == slots_needed) {
+                    pm->number_of_slots_reserved = current_slot_count;
+                    return;
+                }
+            }
+
             slot++;
             if (slot % 64 == 0) row++;
-            continue;
         }
-
-        // If we can set this bit before anyone else, then we have reserved this slot.
-        // We will add it to our stash of slots. And if it's the last one we need, we will return!
-        result = InterlockedBitTestAndSet64((PLONG64) row, offset);
-        if (!result) {
-            add_slot(pm, slot);
-            current_slot_count++;
-
-            if (current_slot_count == slots_needed) {
-                pm->number_of_slots_reserved = current_slot_count;
-                return;
-            }
-        }
-
-        slot++;
-        if (slot % 64 == 0) row++;
     }
 
     // Even if we do not get enough slots, we will return. And it's up to the caller to sort out
@@ -552,6 +578,10 @@ void copy_from_slots_to_packet(PPM pm, PPACKET pkt, PNET net) {
     }
 }
 
+#if DEBUG
+    BOOL flag = FALSE;
+    PPM over_grabbed;
+#endif
 
 /*
  * send_packet
@@ -564,6 +594,7 @@ int send_packet(PPACKET pkt, int role) {
     if (pkt == NULL)                                    return PACKET_REJECTED;
     if (pkt->bytes_in_payload > MAX_PAYLOAD_SIZE)       return PACKET_REJECTED;
     if (role != ROLE_SENDER && role != ROLE_RECEIVER)   return PACKET_REJECTED;
+
 
     // TODO: Apply network unreliability (drop, duplicate, corrupt, reorder)
 
@@ -600,6 +631,7 @@ int send_packet(PPACKET pkt, int role) {
     // Determine the number of slots needed for this packet
     slots_needed = (total_packet_size_in_bytes + NETWORK_BUFFER_SLOT_SIZE_IN_BYTES - 1)
                     / NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
+    ASSERT(slots_needed >= 1);
 
     // Find an available PM. This will always succeed, as it will claim the next PM, even if it is in
     // its READY state.
@@ -615,6 +647,9 @@ int send_packet(PPACKET pkt, int role) {
     if (pm->number_of_slots_reserved < slots_needed) {
         release_all_slots(pm, n);
         pm->status = FREE;
+#if DEBUG
+        debug_info.packets_dropped_for_lack_of_slots++;
+#endif
         return PACKET_REJECTED;
     }
 
@@ -622,9 +657,14 @@ int send_packet(PPACKET pkt, int role) {
     // we already have some number of slots reserved. We need to see if it is too many, and free the extras.
     if (pm->number_of_slots_reserved > slots_needed) {
         release_extra_slots(pm, slots_needed, n);
+#if DEBUG
+        flag = TRUE;
+        over_grabbed = pm;
+#endif
     }
 
     ASSERT(pm->number_of_slots_reserved == slots_needed);
+    ASSERT(slots_needed != 0);
 
     // Great! We have all necessary slots. Let's write our data into the memory buffer
     // __try {

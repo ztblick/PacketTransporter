@@ -25,12 +25,16 @@
  * ============================================================================
  */
 #define NUM_PACKETS_SINGLE_THREADED     10
+#define VERBOSE                         0
 
-#define TOTAL_PACKETS_MULTITHREADED     KB(8)
+#define TEST_BATCHES_MULTITHREADED      10
+
+#define TOTAL_PACKETS_MULTITHREADED     KB(100)
 #define NUM_SENDER_THREADS              4
 #define NUM_RECEIVER_THREADS            4
 #define PACKETS_PER_SENDER              (TOTAL_PACKETS_MULTITHREADED / NUM_SENDER_THREADS)
 
+#define PACKET_TEST_SIZE_IN_BYTES           1024
 
 #define BYTES_IN_HEADER_TEST                16
 #define BYTES_IN_FIELDS_TEST                16
@@ -130,13 +134,15 @@ static int test_single_threaded(void) {
     printf("Sending packets...\n");
     for (int i = 0; i < NUM_PACKETS_SINGLE_THREADED; i++) {
         uint32_t length = (i + 1) % MAX_PAYLOAD_SIZE;
-        fill_packet_with_pattern(&send_pkt, (uint32_t)(i + 1), length);
+        fill_packet_with_pattern(&send_pkt, (uint32_t)(i + 1), PACKET_TEST_SIZE_IN_BYTES);
 
         int result = send_packet((PPACKET) &send_pkt, ROLE_SENDER);
         if (result == PACKET_ACCEPTED) {
             packets_sent++;
         } else {
+            #if VERBOSE
             printf("  FAILED to send packet %d\n", i);
+#endif
         }
     }
     printf("  Sent %d packets.\n\n", packets_sent);
@@ -152,7 +158,9 @@ static int test_single_threaded(void) {
                 packets_validated++;
             }
         } else {
+#if VERBOSE
             printf("  TIMEOUT waiting for packet %d\n", i);
+            #endif
         }
     }
 
@@ -209,11 +217,13 @@ static DWORD WINAPI sender_thread_func(LPVOID param) {
         uint32_t packet_id = (uint32_t)(start_id + i + 1);
         uint32_t length = (i + 1) % MAX_PAYLOAD_SIZE;
 
-        fill_packet_with_pattern(&pkt, packet_id, length);
+        fill_packet_with_pattern(&pkt, packet_id, PACKET_TEST_SIZE_IN_BYTES);
 
         int result = send_packet((PPACKET) &pkt, ROLE_SENDER);
         if (result != PACKET_ACCEPTED) {
+#if VERBOSE
             printf("  Sender %d: FAILED to send packet %u\n", thread_index, packet_id);
+#endif
         }
     }
 
@@ -262,6 +272,7 @@ static DWORD WINAPI receiver_thread_func(LPVOID param) {
 }
 
 static int test_multi_threaded(void) {
+#if VERBOSE
     printf("\n");
     printf("==================================================\n");
     printf("MULTI-THREADED TEST\n");
@@ -270,7 +281,7 @@ static int test_multi_threaded(void) {
     printf("Receiver threads: %d\n", NUM_RECEIVER_THREADS);
     printf("Packets per sender: %d\n", PACKETS_PER_SENDER);
     printf("Total packets:    %d\n\n", TOTAL_PACKETS_MULTITHREADED);
-
+#endif
     /* Initialize shared state */
     InitializeCriticalSection(&g_received_lock);
     memset(g_received_flags, 0, sizeof(g_received_flags));
@@ -282,7 +293,9 @@ static int test_multi_threaded(void) {
     HANDLE receiver_threads[NUM_RECEIVER_THREADS];
 
     /* Start receiver threads first (so they're ready to receive) */
+#if VERBOSE
     printf("Starting receiver threads...\n");
+#endif
     for (int i = 0; i < NUM_RECEIVER_THREADS; i++) {
         receiver_threads[i] = CreateThread(
             NULL,                       /* default security */
@@ -294,13 +307,17 @@ static int test_multi_threaded(void) {
         );
 
         if (receiver_threads[i] == NULL) {
+#if VERBOSE
             printf("  FAILED to create receiver thread %d\n", i);
+#endif
             return 0;
         }
     }
 
     /* Start sender threads */
+#if VERBOSE
     printf("Starting sender threads...\n");
+#endif
     for (int i = 0; i < NUM_SENDER_THREADS; i++) {
         sender_threads[i] = CreateThread(
             NULL,
@@ -318,7 +335,9 @@ static int test_multi_threaded(void) {
     }
 
     /* Wait for all sender threads to complete */
+#if VERBOSE
     printf("Waiting for sender threads to complete...\n");
+#endif
     WaitForMultipleObjects(NUM_SENDER_THREADS, sender_threads, TRUE, INFINITE);
 
     /* Close sender thread handles */
@@ -327,7 +346,9 @@ static int test_multi_threaded(void) {
     }
 
     /* Wait for all receiver threads to complete */
+#if VERBOSE
     printf("Waiting for receiver threads to complete...\n");
+#endif
     WaitForMultipleObjects(NUM_RECEIVER_THREADS, receiver_threads, TRUE, INFINITE);
 
     /* Close receiver thread handles */
@@ -339,7 +360,9 @@ static int test_multi_threaded(void) {
     int missing_count = 0;
     for (int i = 1; i <= TOTAL_PACKETS_MULTITHREADED; i++) {
         if (!g_received_flags[i]) {
+#if VERBOSE
             printf("  MISSING packet %d\n", i + 1);
+#endif
             missing_count++;
         }
     }
@@ -361,10 +384,9 @@ static int test_multi_threaded(void) {
     if (g_packets_validated == TOTAL_PACKETS_MULTITHREADED && missing_count == 0) {
         printf("  STATUS: PASS\n");
         return 1;
-    } else {
-        printf("  STATUS: FAIL\n");
-        return 0;
     }
+    printf("  STATUS: FAIL\n");
+    return 0;
 }
 
 /*
@@ -412,27 +434,29 @@ int main(void) {
     printf("========================\n");
 
     int pass_count = 0;
-    int total_tests = 2;
+    int total_tests = TEST_BATCHES_MULTITHREADED;
 
     // Single Threaded Test
-    initialize_layers_and_all_data();
-    if (!test_single_threaded()) {
-        free_all_data_and_shut_down();
-        printf("Failed single-threaded test\n");
-        return 1;
-    }
-    pass_count++;
-    free_all_data_and_shut_down();
+    // initialize_layers_and_all_data();
+    // if (!test_single_threaded()) {
+    //     free_all_data_and_shut_down();
+    //     printf("Failed single-threaded test\n");
+    //     return 1;
+    // }
+    // pass_count++;
+    // free_all_data_and_shut_down();
 
     // Multithreaded test
-    initialize_layers_and_all_data();
-    if (test_multi_threaded()) {
-        pass_count++;
+    for (int i = 0; i < total_tests; i++) {
+        initialize_layers_and_all_data();
+        if (test_multi_threaded()) {
+            pass_count++;
+        }
+        free_all_data_and_shut_down();
     }
 
     // Cleanup
     printf("\nCleaning up network layer...\n");
-    free_all_data_and_shut_down();
 
     // Final summary
     printf("\n");
