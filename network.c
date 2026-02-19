@@ -251,9 +251,14 @@ void add_slot(PPM pm, ULONG64 slot) {
     // Traverse through the slot list, if necessary, until reaching a level with available slots.
     while (slot_count >= SLOTS_PER_LAYER) {
 
-        if (!next) next = zero_malloc(sizeof(SLN));     // TODO chat with Landy about this.
+        if (!next) {
+            next = zero_malloc(sizeof(SLN));     // TODO chat with Landy about this.
+            // Save the reference to this newly allocated memory
+            current->next = next;
+        }
         if (!next) ASSERT(FALSE);
 
+        // Move our variables along to the next layer
         current = next;
         next = current->next;
         slot_count = current->number_of_slots_reserved_at_node;
@@ -486,13 +491,7 @@ void copy_packet_data_into_slots(PPM pm, PPACKET pkt, PNET net) {
         total_bytes_to_copy -= bytes_to_copy_for_this_slot;
 
         // We copy our data into the slot
-        __try {
-            memcpy(dest, src, bytes_to_copy_for_this_slot);
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER) {
-            ASSERT(FALSE);
-        }
-
+        memcpy(dest, src, bytes_to_copy_for_this_slot);
         num_copies--;
 
         // If we have finished our last copy, we break and return!
@@ -550,12 +549,7 @@ void copy_from_slots_to_packet(PPM pm, PPACKET pkt, PNET net) {
         bytes_left_to_copy -= bytes_to_copy_for_this_slot;
 
         // We copy our data into the slot
-        __try{
-            memcpy(dest, src, bytes_to_copy_for_this_slot);
-        }
-        __except(EXCEPTION_EXECUTE_HANDLER) {
-            ASSERT(FALSE);
-        }
+        memcpy(dest, src, bytes_to_copy_for_this_slot);
 
         // If we have done the final copy, we are good to go!
         num_copies--;
@@ -667,19 +661,19 @@ int send_packet(PPACKET pkt, int role) {
     ASSERT(slots_needed != 0);
 
     // Great! We have all necessary slots. Let's write our data into the memory buffer
-    // __try {
+    __try {
         copy_packet_data_into_slots(pm, pkt, n);
-    // }
+    }
     // If the memcpy fails, then there must be a problem with the pointer
     // passed in from the transport layer. We will reject the packet
     // and return.
-    // __except (EXCEPTION_EXECUTE_HANDLER) {
-    //     printf("Error copying from transport packet.\n");
-    //     release_all_slots(pm, n);
-    //     pm->status = FREE;
-    //     ASSERT(FALSE);
-    //     return PACKET_REJECTED;
-    // }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        printf("Error copying from transport packet.\n");
+        release_all_slots(pm, n);
+        pm->status = FREE;
+        ASSERT(FALSE);
+        return PACKET_REJECTED;
+    }
 
     // The packet has been added to the network. Now we will timestamp it with its arrival time
     // and set its status as READY.
@@ -725,17 +719,17 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
             ASSERT(pm->status == READING);
             ASSERT(pm->total_size_in_bytes > 0);
 
-            // __try {
+            __try {
                 copy_from_slots_to_packet(pm, pkt, n);
-            // }
+            }
             // If the memcopy fails, we assume a bad actor on the transport layer,
             // And we reject the packet.
-            // __except (EXCEPTION_EXECUTE_HANDLER) {
-            //     printf("Error copying data to transport packet\n");
-            //     pm->status = READY;
-            //     ASSERT(FALSE);
-            //     return PACKET_REJECTED;
-            // }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                printf("Error copying data to transport packet\n");
+                pm->status = READY;
+                ASSERT(FALSE);
+                return PACKET_REJECTED;
+            }
 
             // Great! The data was written to the packet. Let's free the data slots and move
             // the PM back into its FREE state
