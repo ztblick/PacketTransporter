@@ -421,43 +421,43 @@ void free_application_layer(void) {
 
 }
 
-// void initialize_layers_and_all_data(void) {
-//
-//     simulation_begin = CreateEvent(
-//         NULL,                                   // Default security attributes
-//         TRUE,                                   // Manual reset event!
-//         FALSE,                                   // Initially the event is NOT set.
-//         TEXT("BeginSimulationEvent")            // Event name
-//         );
-//
-//     simulation_end = CreateEvent(
-//         NULL,
-//         TRUE,
-//         FALSE,
-//         TEXT("EndSimulationEvent")
-//         );
-//
-//     // Initialize all layers
-//     create_application_layer();
-//     create_transport_layer();
-//     create_network_layer();
-//
-//     // Initialize timing
-//     time_init();
-//
-// }
-//
-// void free_all_data_and_shut_down(void) {
-//
-//     SetEvent(simulation_end);
-//
-//     free_network_layer();
-//     free_transport_layer();
-//     free_application_layer();
-//
-//     CloseHandle(simulation_begin);
-//     CloseHandle(simulation_end);
-// }
+void initialize_layers_and_all_data(void) {
+
+    simulation_begin = CreateEvent(
+        NULL,                                   // Default security attributes
+        TRUE,                                   // Manual reset event!
+        FALSE,                                   // Initially the event is NOT set.
+        TEXT("BeginSimulationEvent")            // Event name
+        );
+
+    simulation_end = CreateEvent(
+        NULL,
+        TRUE,
+        FALSE,
+        TEXT("EndSimulationEvent")
+        );
+
+    // Initialize all layers
+    create_application_layer();
+    create_transport_layer();
+    create_network_layer();
+
+    // Initialize timing
+    time_init();
+
+}
+
+void free_all_data_and_shut_down(void) {
+
+    SetEvent(simulation_end);
+
+    free_network_layer();
+    free_transport_layer();
+    free_application_layer();
+
+    CloseHandle(simulation_begin);
+    CloseHandle(simulation_end);
+}
 
 LONG64 parse_argument_as_integer(char *arg, ULONG64 min, ULONG64 max) {
     if (arg == NULL || *arg == '\0') return ARG_ERROR;   // NULL or empty
@@ -535,54 +535,54 @@ BOOL validate_input(int argc, char ** argv) {
  *      [transmission count]        number of transmissions.                                Default: 1
  *      [max transmission size]     maximum size of a transmission in the test.             Default: 128 KB
  */
-// int main(int argc, char** argv) {
-//
-//     // Ensure proper usage
-//     if (argc != 1 && argc != ARG_COUNT) {
-//         printf("Usage: PacketTransporter.exe\n\t[sending threads]\n"
-//                "\t[receiving threads]\n\t[transmission count]\n\t[max transmission size]\n");
-//         return 1;
-//     }
-//     printf("==================================================\n");
-//     printf("Launching Packet Transporter\n");
-//     printf("==================================================\n");
-//     printf("Validating input...\n");
-//
-//     initialize_app_state();
-//     if (!validate_input(argc, argv)) return 1;
-//
-//     // Now that we have validated the command line arguments, let's print a message indicating that
-//     // we are beginning to set up the test
-//     printf("Input is valid!\n");
-//     printf("==================================================\n");
-//     printf("Sending threads: %llu\n", app.sending_thread_count);
-//     ASSERT(app.sending_thread_count > 0 && app.sending_thread_count <= MAX_THREAD_COUNT);
-//     printf("Receiving threads: %llu\n", app.receiving_thread_count);
-//     ASSERT(app.receiving_thread_count > 0 && app.receiving_thread_count <= MAX_THREAD_COUNT);
-//     printf("Transmission count: %d\n", app.transmission_count);
-//     ASSERT(app.transmission_count > 0 && app.transmission_count <= MAX_TRANSMISSION_COUNT);
-//     printf("Max transmission limit KB: %llu\n", app.max_transmission_limit_KB);
-//     ASSERT(app.max_transmission_limit_KB > 0 && app.max_transmission_limit_KB <= MAX_TRANSMISSION_LIMIT_KB);
-//     printf("==================================================\n");
-//
-//     // Now we will initialize all layers
-//     printf("Initializing layers...\n");
-//     initialize_layers_and_all_data();
-//     printf("Layers initialized!\n");
-//     printf("==================================================\n");
-//
-//     // Now we will begin the test!
-//     run_test();
-//
-//     printf("Done!\n");
-//     printf("==================================================\n");
-//
-//     // Finally, we will clean up and print out relevant statistics
-//     free_all_data_and_shut_down();
-//
-//     printf("Printing statistics...\n");
-//     print_stats();
-//     printf("==================================================\n");
-//
-//     return 0;
-// }
+int main(int argc, char** argv) {
+
+    // Ensure proper usage
+    if (argc != 1 && argc != ARG_COUNT) {
+        printf("Usage: PacketTransporter.exe\n\t[sending threads]\n"
+               "\t[receiving threads]\n\t[transmission count]\n\t[max transmission size]\n");
+        return 1;
+    }
+    printf("==================================================\n");
+    printf("Launching Packet Transporter\n");
+    printf("==================================================\n");
+    printf("Validating input...\n");
+
+    initialize_app_state();
+    if (!validate_input(argc, argv)) return 1;
+
+    // Now that we have validated the command line arguments, let's print a message indicating that
+    // we are beginning to set up the test
+    printf("Input is valid!\n");
+    printf("==================================================\n");
+    printf("Sending threads: %llu\n", app.sending_thread_count);
+    ASSERT(app.sending_thread_count > 0 && app.sending_thread_count <= MAX_THREAD_COUNT);
+    printf("Receiving threads: %llu\n", app.receiving_thread_count);
+    ASSERT(app.receiving_thread_count > 0 && app.receiving_thread_count <= MAX_THREAD_COUNT);
+    printf("Transmission count: %d\n", app.transmission_count);
+    ASSERT(app.transmission_count > 0 && app.transmission_count <= MAX_TRANSMISSION_COUNT);
+    printf("Max transmission limit KB: %llu\n", app.max_transmission_limit_KB);
+    ASSERT(app.max_transmission_limit_KB > 0 && app.max_transmission_limit_KB <= MAX_TRANSMISSION_LIMIT_KB);
+    printf("==================================================\n");
+
+    // Now we will initialize all layers
+    printf("Initializing layers...\n");
+    initialize_layers_and_all_data();
+    printf("Layers initialized!\n");
+    printf("==================================================\n");
+
+    // Now we will begin the test!
+    run_test();
+
+    printf("Done!\n");
+    printf("==================================================\n");
+
+    // Finally, we will clean up and print out relevant statistics
+    free_all_data_and_shut_down();
+
+    printf("Printing statistics...\n");
+    print_stats();
+    printf("==================================================\n");
+
+    return 0;
+}
