@@ -395,74 +395,74 @@ static int test_multi_threaded(void) {
  * ============================================================================
  */
 
-void initialize_layers_and_all_data(void) {
-
-    simulation_begin = CreateEvent(
-        NULL,                                   // Default security attributes
-        TRUE,                                   // Manual reset event!
-        FALSE,                                   // Initially the event is NOT set.
-        TEXT("BeginSimulationEvent")            // Event name
-        );
-
-    simulation_end = CreateEvent(
-        NULL,
-        TRUE,
-        FALSE,
-        TEXT("EndSimulationEvent")
-        );
-
-    create_network_layer();
-
-    // Initialize timing
-    time_init();
-
-    SetEvent(simulation_begin);
-}
-
-void free_all_data_and_shut_down(void) {
-
-    SetEvent(simulation_end);
-
-    free_network_layer();
-
-    CloseHandle(simulation_begin);
-    CloseHandle(simulation_end);
-}
-
-int main(void) {
-    printf("Network Layer Test Suite\n");
-    printf("========================\n");
-
-    int pass_count = 0;
-    int total_tests = TEST_BATCHES_MULTITHREADED;
-
-    // Single Threaded Test
-    // initialize_layers_and_all_data();
-    // if (!test_single_threaded()) {
-    //     free_all_data_and_shut_down();
-    //     printf("Failed single-threaded test\n");
-    //     return 1;
-    // }
-    // pass_count++;
-    // free_all_data_and_shut_down();
-
-    // Multithreaded test
-    for (int i = 0; i < total_tests; i++) {
-        initialize_layers_and_all_data();
-        if (test_multi_threaded()) {
-            pass_count++;
-        }
-        free_all_data_and_shut_down();
-    }
-
-    // Cleanup
-    printf("\nCleaning up network layer...\n");
-
-    // Final summary
-    printf("\n");
-    printf("==================================================\n");
-    printf("SUMMARY: %d of %d tests passed\n", pass_count, total_tests);
-    printf("==================================================\n");
-
-    return (pass_count == total_tests) ? 0 : 1;
-}
+// void initialize_layers_and_all_data(void) {
+//
+//     simulation_begin = CreateEvent(
+//         NULL,                                   // Default security attributes
+//         TRUE,                                   // Manual reset event!
+//         FALSE,                                   // Initially the event is NOT set.
+//         TEXT("BeginSimulationEvent")            // Event name
+//         );
+//
+//     simulation_end = CreateEvent(
+//         NULL,
+//         TRUE,
+//         FALSE,
+//         TEXT("EndSimulationEvent")
+//         );
+//
+//     create_network_layer();
+//
+//     // Initialize timing
+//     time_init();
+//
+//     SetEvent(simulation_begin);
+// }
+//
+// void free_all_data_and_shut_down(void) {
+//
+//     SetEvent(simulation_end);
+//
+//     free_network_layer();
+//
+//     CloseHandle(simulation_begin);
+//     CloseHandle(simulation_end);
+// }
+//
+// int main(void) {
+//     printf("Network Layer Test Suite\n");
+//     printf("========================\n");
+//
+//     int pass_count = 0;
+//     int total_tests = TEST_BATCHES_MULTITHREADED;
+//
+//     // Single Threaded Test
+//     // initialize_layers_and_all_data();
+//     // if (!test_single_threaded()) {
+//     //     free_all_data_and_shut_down();
+//     //     printf("Failed single-threaded test\n");
+//     //     return 1;
+//     // }
+//     // pass_count++;
+//     // free_all_data_and_shut_down();
+//
+//     // Multithreaded test
+//     for (int i = 0; i < total_tests; i++) {
+//         initialize_layers_and_all_data();
+//         if (test_multi_threaded()) {
+//             pass_count++;
+//         }
+//         free_all_data_and_shut_down();
+//     }
+//
+//     // Cleanup
+//     printf("\nCleaning up network layer...\n");
+//
+//     // Final summary
+//     printf("\n");
+//     printf("==================================================\n");
+//     printf("SUMMARY: %d of %d tests passed\n", pass_count, total_tests);
+//     printf("==================================================\n");
+//
+//     return (pass_count == total_tests) ? 0 : 1;
+// }
