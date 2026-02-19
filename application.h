@@ -47,7 +47,7 @@ typedef struct transmission_info {
     size_t bytes_received;
     ULONG64 time_sent_ms;
     ULONG64 time_received_ms;
-} TRANSMISSION_INFO, *PTRANSMISSION_INFO;
+} APP_TRANSMISSION_INFO, *PAPP_TRANSMISSION_INFO;
 
 // The lock_sent field is used to protect against multiple sending threads sending
 // the same transmission.
@@ -74,7 +74,7 @@ typedef struct app_state {
     LONG64 lock_sent[TRANSMISSION_LOCK_ROWS];
     LONG64 lock_received[TRANSMISSION_LOCK_ROWS];
 
-    TRANSMISSION_INFO transmission_info[MAX_TRANSMISSION_COUNT];
+    APP_TRANSMISSION_INFO transmission_info[MAX_TRANSMISSION_COUNT];
 } APP_STATE, *PAPP_STATE;
 
 /*
