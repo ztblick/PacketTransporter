@@ -1,35 +1,72 @@
 #pragma once
 
+/**
+ * When we split work across our sender minions (worker threads) we will need to know how many
+ * packets are assigned to a minion. This is the maximum number of contiguous packets
+ * we will assign to a minion at any time.
+ */
+#define MAX_CHUNK_SIZE_IN_PACKETS   4
+
 typedef struct {
 
-    // Bitmap (pointer) -- each bit indicates if a "chunk" of the
-    // transmission has been assigned to a worker
+    /**
+     * Bitmap (pointer): there is one bit per packet here. All are initially 0.
+     * When a packet is ACK'd, its bit is set. Only the sender-listener sets these bits.
+     *
+     * E.G. Let's say no packets are ACK'd:                         000
+     *      Then packet 1 is ACK'd. Sender listener sets its bit:   010
+     *
+     * TODO Ask LANDY about concerns about word tearing here. Do we need to do anything with read/write no fence?
+     **/
+    PULONG64 packet_status_bitmap;
 
-    // Bitmap (pointer) -- each bit indicates if the "chunk" has
-    // been fully sent and ACKed
+    /**
+     * This field will be atomically incremented. Each sender minion will do an interlocked increment on this
+     * field to claim the next chunk of packets.
+     */
+    volatile ULONG64 next_chunk_index;
+
+    // Initialized to describe the number of packets needed to send all of the transmission's data.
+    ULONG64 number_of_packets_in_transmission;
 
     // Pointer to the transmission's data (given from send_transmission)
+    PBYTE data;
 
 } SENDER_TRANSMISSION_INFO, *PSENDER_TRANSMISSION_INFO;
 
 typedef struct {
 
     // Transmission ID
+    ULONG64 transmission_id;
 
     // Pointer to its offset in the transmission data
+    PBYTE data_to_send;
 
     // Size of the chunk that is being packetized
+    ULONG64 bytes_to_send;
 
-    // Bitmap for packet status (ACKed or not) -- but needs to be accessed by sender_listener somehow...
+} SENDER_MINION_INFO, *PSENDER_MINION_INFO;
 
-} WORKER_THREAD_INFO, *PWWORKER_THREAD_INFO;
+/**
+ * This data structure keeps track of the transmissions in the order in which they are received.
+ * It facilitates the minions as they seek out the next chunk of work.
+ */
+typedef struct {
+    // TODO implement an array and an index that will allow us to easily move from one transmission to the next
+
+    // TODO think about adding a new transmission when it is received
+
+    // TODO think about what happens when a transmission's final chunk is assigned
+} TRANSMISSION_CACHE;
 
 typedef struct {
 
     // Queue of transmission IDs to indicate which
     // transmission should be worked on next
+    TRANSMISSION_CACHE transmissions_queue;
 
     // Sparse array (index = transmission ID) of transmission info structs
+    PSENDER_TRANSMISSION_INFO transmission_info;
 
 } SENDER_STATE, *PSENDER_STATE;
 
