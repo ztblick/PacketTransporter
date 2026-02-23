@@ -17,7 +17,7 @@ void free_transport_layer(void) {
     return;
 }
 
-int send_transmission(uint32_t transmission_id, void* data, size_t length) {
+int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length) {
 
     // TODO: Student implementation
     // - Break data into packets tagged with transmission_id
@@ -27,7 +27,7 @@ int send_transmission(uint32_t transmission_id, void* data, size_t length) {
 }
 
 
-int receive_transmission(uint32_t* out_id, void* dest, size_t* out_length, int timeout_ms) {
+int receive_transmission(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
 
     // TODO: Student implementation
     // - Receive packets via receive_packet() or try_receive_packet()
