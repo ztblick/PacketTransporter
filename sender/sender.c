@@ -41,7 +41,22 @@ VOID send_packet_batch(ULONG64 number_of_packets_to_send)
 
 DWORD sender_listener(LPVOID param)
 {
-    receive_transmission(0, NULL, NULL, INFINITE);
+    ULONG64 timeout_ms = 100;
+
+    COMM_PACKET packet; // Will need to change this to an array of packet locations and receive them there ?
+
+    while (TRUE)
+    {
+        int packet_received_status = receive_packet((PPACKET) &packet, timeout_ms, ROLE_SENDER);
+        if (packet_received_status == NO_PACKET_AVAILABLE)
+        {
+            break;
+        }
+
+        // Immediately write out the comms we received to our transmission bitmaps for the minions.
+
+    }
+
 
     /*
     *Wait for single object (packets sent)
@@ -49,11 +64,15 @@ DWORD sender_listener(LPVOID param)
     then loop try recieve packet until no more
     then go back to receive packet
     */
+
+    return 0;
 }
 
 DWORD sender_minion(LPVOID param)
 {
 
+
+    return 0;
 }
 
 VOID find_work(VOID)

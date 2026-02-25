@@ -30,7 +30,7 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
 
     ULONG64 num_packets = length / MAX_PAYLOAD_SIZE;
     current_transmission->number_of_packets_in_transmission = num_packets;
-    current_transmission->packet_status_bitmap = malloc((num_packets / 8) + 1);
+    current_transmission->packet_status_bitmap = malloc((num_packets + 7) / 8);
 
     
     return TRANSMISSION_ACCEPTED;
