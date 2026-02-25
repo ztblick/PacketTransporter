@@ -8,6 +8,7 @@
 #define MAX_CHUNK_SIZE_IN_PACKETS   4
 #define SENDER_MINION_COUNT         2
 
+
 typedef struct {
 
     /**
@@ -67,10 +68,9 @@ typedef struct {
     TRANSMISSION_CACHE transmissions_queue;
 
     // Sparse array (index = transmission ID) of transmission info structs
-    PSENDER_TRANSMISSION_INFO transmission_info;
+    PSENDER_TRANSMISSION_INFO transmissions_in_progress;
 
 } SENDER_STATE, *PSENDER_STATE;
-
 
 
 /**
