@@ -6,6 +6,7 @@
  * we will assign to a minion at any time.
  */
 #define MAX_CHUNK_SIZE_IN_PACKETS   4
+#define SENDER_MINION_COUNT         2
 
 typedef struct {
 
@@ -134,7 +135,7 @@ DWORD sender_listener(LPVOID param);
  * @param param
  * @return
  */
-DWORD sender_worker(LPVOID param);
+DWORD sender_minion(LPVOID param);
 
 /**
  * @brief Called by the sender worker thread to determine its next job.
