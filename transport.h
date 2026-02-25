@@ -10,6 +10,20 @@
 #pragma once
 
 #include "network.h"
+#include "transport_receiver.h"
+#include "transport_sender.h"
+
+typedef struct {
+    LIST_ENTRY list_entry;
+    PPACKET packet;
+} PACKET_LIST_ENTRY, *PPACKET_LIST_ENTRY;
+
+typedef struct {
+    PACKET_LIST_ENTRY entry;
+    int list_length;
+    CRITICAL_SECTION lock;
+
+} PACKET_LIST_HEAD, *PPACKET_LIST_HEAD;
 
 /*
  *  create_transport_layer
@@ -25,7 +39,7 @@ void create_transport_layer(void);
  */
 void free_transport_layer(void);
 
-/*
+/**
  * send_transmission
  *
  * Reliably sends data to the receiver.
@@ -42,10 +56,21 @@ void free_transport_layer(void);
  * Notes:
  *   - Must break data into packets, each tagged with transmission_id
  *   - Should return only after transmission is complete or has failed
+ *
+ *
+ *  When this function is called, we execute these steps in this order:
+ *  1. We create a batch of packets from the transmission
+ *  2. We send that batch
+ *  3. We wait LATENCY_MS amount of time OR for the sender-listener to wake us
+ *  4. We check our bitmap of ACKS
+ *  5. If we need to re-send any packets, we will and we will repeat step 3.
+ *  6. Otherwise, we move on to the next batch.
+ *
+ *
  */
 #define TRANSMISSION_ACCEPTED       0
 #define TRANSMISSION_REJECTED       1
-int send_transmission(uint32_t transmission_id, void* data, size_t length);
+int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length);
 
 
 /*
@@ -72,4 +97,4 @@ int send_transmission(uint32_t transmission_id, void* data, size_t length);
  */
 #define TRANSMISSION_RECEIVED       0
 #define NO_TRANSMISSION_AVAILABLE   1
-int receive_transmission(uint32_t* out_id, void* dest, size_t* out_length, int timeout_ms);
+int receive_transmission(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms);
