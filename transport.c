@@ -8,6 +8,7 @@
  */
 
 #include "transport.h"
+#include "transport_sender.h"
 
 void create_transport_layer(void) {
     return;
@@ -26,6 +27,36 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length) {
     return TRANSMISSION_ACCEPTED;
 }
 
+VOID create_sender(VOID)
+{
+
+}
+
+VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize)
+{
+
+}
+
+VOID send_packet_batch(ULONG64 number_of_packets_to_send)
+{
+
+}
+
+
+DWORD sender_listener(LPVOID param)
+{
+
+}
+
+DWORD sender_worker(LPVOID param)
+{
+
+}
+
+VOID find_work(VOID)
+{
+
+}
 
 int receive_transmission(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
 
