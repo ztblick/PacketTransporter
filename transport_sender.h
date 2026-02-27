@@ -146,4 +146,4 @@ DWORD sender_minion(LPVOID param);
  * This will give the thread a chunk of a transmission to send & check,
  * or it will put it to sleep if no work is available.
  */
-VOID find_work(VOID);
+PVOID find_work(VOID);

@@ -138,7 +138,7 @@ DWORD sender_minion(LPVOID param)
     return 0;
 }
 
-VOID find_work(VOID)
+PVOID find_work(VOID)
 {
-
+    g_sender_state.
 }
