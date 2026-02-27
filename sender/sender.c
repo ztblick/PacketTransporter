@@ -63,6 +63,10 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
         packet.n_packets_in_transmission = minion_info.n_packets_in_transmission;
         packet.transmission_id = minion_info.transmission_id;
 
+        // Do I want to do this here??
+        // g_sender_state.transmissions_in_progress[minion_info.transmission_id]
+        // .number_of_packets_in_transmission++;
+
         // Not using send packet batch for now.
         if (send_packet((PPACKET) &packet, ROLE_SENDER) == PACKET_REJECTED)
         {
@@ -140,5 +144,9 @@ DWORD sender_minion(LPVOID param)
 
 PVOID find_work(VOID)
 {
-    g_sender_state.
+    g_sender_state.transmissions_in_progress->packet_status_bitmap;
+}
+
+UINT32 get_next_transmissionID(VOID) {
+
 }

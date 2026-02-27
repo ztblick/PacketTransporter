@@ -59,6 +59,9 @@ typedef struct {
 typedef struct {
     // TODO implement an array and an index that will allow us to easily move from one transmission to the next
 
+
+
+
     // TODO think about adding a new transmission when it is received
 
     // TODO think about what happens when a transmission's final chunk is assigned
