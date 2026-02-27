@@ -64,7 +64,7 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
         packet.transmission_id = minion_info.transmission_id;
 
         // Not using send packet batch for now.
-        if (!send_packet((PPACKET) &packet, ROLE_SENDER))
+        if (send_packet((PPACKET) &packet, ROLE_SENDER) == PACKET_REJECTED)
         {
             DebugBreak();
         }
@@ -90,10 +90,33 @@ DWORD sender_listener(LPVOID param)
         int packet_received_status = receive_packet((PPACKET) &packet, timeout_ms, ROLE_SENDER);
         if (packet_received_status == NO_PACKET_AVAILABLE)
         {
-            break;
+            continue;
         }
 
+        UINT32 transmission_id = packet.transmission_id;
+
         // Immediately write out the comms we received to our transmission bitmaps for the minions.
+        PSENDER_TRANSMISSION_INFO transmission_info = &g_sender_state.transmissions_in_progress[transmission_id];
+
+
+        for (int i = 0; i < packet.n_bits_to_read; i++)
+        {
+            BYTE current_byte = packet.bitmap[i / 8];
+
+            // Had to look up this bitwise operator stuff but I think it's right.
+            int is_bit_set = current_byte & 1 << (i % 8);
+
+            // Weird thing where I have to divide by 64 instead of 8 because the packet status bitmap is 64 bits
+            // as opposed to the packet bitmap's 8 bit data type.
+            if (is_bit_set)
+            {
+                UINT32 packet_index = packet.first_packet_index + i;
+                transmission_info->packet_status_bitmap[packet_index / 64] |= 1ULL << (packet_index % 64);
+            }
+
+        }
+
+
 
     }
 
