@@ -7,6 +7,7 @@
  */
 #define MAX_CHUNK_SIZE_IN_PACKETS   4
 #define SENDER_MINION_COUNT         2
+#define WORK_ARRAY_SIZE             16
 
 
 typedef struct {
@@ -59,8 +60,8 @@ typedef struct {
 typedef struct {
     // TODO implement an array and an index that will allow us to easily move from one transmission to the next
 
-
-
+    PUINT32 work_array;
+    volatile ULONG64 next_chunk_index;
 
     // TODO think about adding a new transmission when it is received
 
@@ -150,3 +151,5 @@ DWORD sender_minion(LPVOID param);
  * or it will put it to sleep if no work is available.
  */
 PVOID find_work(VOID);
+
+UINT32 get_next_transmissionID(VOID);

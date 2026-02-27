@@ -7,6 +7,7 @@
 
 
 SENDER_STATE g_sender_state;
+TRANSMISSION_CACHE g_transmission_cache;
 
 
 VOID create_sender(VOID)
@@ -17,6 +18,13 @@ VOID create_sender(VOID)
         MEM_RESERVE | MEM_COMMIT,
         PAGE_READWRITE);
 
+
+    g_transmission_cache.work_array = (PUINT32)VirtualAlloc(NULL,
+        sizeof(UINT32) * WORK_ARRAY_SIZE,
+        MEM_RESERVE | MEM_COMMIT,
+        PAGE_READWRITE);
+
+    g_transmission_cache.next_chunk_index = 0;
 
     // Create sender listener thread.
     CreateThread(NULL, 0, sender_listener, NULL, 0, NULL);
@@ -148,5 +156,11 @@ PVOID find_work(VOID)
 }
 
 UINT32 get_next_transmissionID(VOID) {
+    while (&g_transmission_cache.work_array[g_transmission_cache.next_chunk_index] == NULL) {
+        g_transmission_cache.next_chunk_index++;
+    }
+    UINT32 transmission_id = g_transmission_cache.work_array[g_transmission_cache.next_chunk_index];
+    if (g_sender_state.transmissions_in_progress[transmission_id].number_of_packets_in_transmission != 1) {
 
+    }
 }
