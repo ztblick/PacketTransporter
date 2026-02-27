@@ -49,7 +49,7 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
             memcpy(packet.data, transmission_data + i, packet.bytes_in_payload);
         }
         __except (EXCEPTION_EXECUTE_HANDLER){
-            DebugBreak();
+            // Not sure what to put here?
         }
 
 
@@ -138,7 +138,7 @@ DWORD sender_minion(LPVOID param)
     return 0;
 }
 
-PVOID find_work(VOID)
+VOID find_work(VOID)
 {
 
 }
