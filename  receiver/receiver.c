@@ -36,7 +36,7 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
 
     // when multiple threads commit the same memory, nothing happens. so this is thread safe
     VirtualAlloc( (LPVOID) pageDataStartsOn, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES, MEM_COMMIT, PAGE_READWRITE);
-
+    memset((LPVOID) pageDataStartsOn, 0, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES);
 
     // if someone else has started the initialization wait for it to finish
     if (_interlockedbittestandset64(&(g_receiver_state.transmission_info_sparse_array[id].initializationStarted), 0) == 1) {
@@ -49,7 +49,7 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
 
 
 
-    g_receiver_state.transmission_info_sparse_array[id].transmission_data = VirtualAlloc(NULL, num_packets * PACKET_PAYLOAD_SIZE_IN_BYTES,  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    g_receiver_state.transmission_info_sparse_array[id].transmission_data = VirtualAlloc(NULL, num_packets * PACKET_PAYLOAD_SIZE_IN_BYTES,  MEM_RESERVE, PAGE_READWRITE);
 
 
 
@@ -58,8 +58,8 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
 
 
     // This just commits it straight up, as we get bigger file sizes, I will do the same reserve and commit strategy
-    g_receiver_state.transmission_info_sparse_array[id].status_bitmap = VirtualAlloc(NULL, numBitmaps * sizeof(ULONG64),   MEM_COMMIT, PAGE_READWRITE);
-
+    g_receiver_state.transmission_info_sparse_array[id].status_bitmap = VirtualAlloc(NULL, numBitmaps * sizeof(ULONG64),   MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    memset(g_receiver_state.transmission_info_sparse_array[id].status_bitmap, 0 , numBitmaps * sizeof(ULONG64));
     // if (num_packets % 64 != 0) {
     //     ULONG64 num_remaining_packets = num_packets % 64;
     //     // set the bits we do not need to 1
@@ -90,14 +90,25 @@ void document_received_transmission(PDATA_PACKET pkt) {
 
 
     //todo ask landy about speed
+    boolean needsInitialization = FALSE;
     __try {
-        while (TRUE) {
-            if (transmission_info->initializationComplete == 1) {
-                break;
+        // check if it is initialized
+        if (transmission_info->initializationStarted == 0) {
+            needsInitialization = TRUE;
+        } else {
+            // wait for initialization to finish
+            while (TRUE) {
+                if (transmission_info->initializationComplete == 1) {
+                    break;
+                }
             }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
 
+        init_received_transmission(pkt->transmission_id, pkt->n_packets_in_transmission);
+    }
+
+    if (needsInitialization) {
         init_received_transmission(pkt->transmission_id, pkt->n_packets_in_transmission);
     }
 
