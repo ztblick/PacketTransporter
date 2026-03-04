@@ -166,15 +166,21 @@ COMM_PACKET assemble_COMM_packet_from_packet(DATA_PACKET pkt) {
     ULONG64 bitmapStart = (bitMapNumber /1024);
 
 
+    ULONG64 lastPacket = (bitmapStart + 1024);
+
+    size_t numBytes = PACKET_PAYLOAD_SIZE_IN_BYTES;
+    // confirm if the num packets is always a multiple of 8
+    if (lastPacket > (pkt.n_packets_in_transmission / 8)) {
+        numBytes = lastPacket - bitmapStart;
+    }
 
 
-    commPacket.n_bits_to_read  = PACKET_PAYLOAD_SIZE_IN_BYTES * 8;
-    commPacket.bytes_in_bitmap = PACKET_PAYLOAD_SIZE_IN_BYTES;
+    commPacket.n_bits_to_read  = numBytes * 8;
+    commPacket.bytes_in_bitmap = numBytes;
     commPacket.first_packet_index = (bitmapStart * 8);
 
-    // todo I am reading memory that is not mine, but I know the reciever does not care about the data so there is no security issue plus it is only my own data, so it does not matter
-    // similar to tb flush ask landy
-    memcpy(&commPacket.bitmap, &g_receiver_state.transmission_info_sparse_array[pkt.transmission_id].status_bitmap[bitmapStart],PACKET_PAYLOAD_SIZE_IN_BYTES);
+    // todo make beckett right a multiple of eight to my bits.
+    memcpy(&commPacket.bitmap, &g_receiver_state.transmission_info_sparse_array[pkt.transmission_id].status_bitmap[bitmapStart], numBytes);
     return commPacket;
 }
 
