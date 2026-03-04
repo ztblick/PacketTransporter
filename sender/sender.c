@@ -127,11 +127,7 @@ DWORD sender_listener(LPVOID param)
             }
 
         }
-
-
-
     }
-
 
     /*
     *Wait for single object (packets sent)
