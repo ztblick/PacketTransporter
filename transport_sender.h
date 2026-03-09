@@ -152,4 +152,4 @@ DWORD sender_minion(LPVOID param);
  */
 PVOID find_work(PSENDER_MINION_INFO briefcase);
 
-UINT32 get_next_transmissionID(VOID);
+UINT32 get_next_transmission_id(VOID);
