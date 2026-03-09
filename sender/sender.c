@@ -141,22 +141,19 @@ DWORD sender_listener(LPVOID param)
 
 DWORD sender_minion(LPVOID param)
 {
+    PSENDER_MINION_INFO briefcase = (PUINT32)VirtualAlloc(NULL,
+        sizeof(UINT32) * WORK_ARRAY_SIZE,
+        MEM_RESERVE | MEM_COMMIT,
+        PAGE_READWRITE);
+    briefcase->transmission_id = find_work();
 
 
     return 0;
 }
 
-PVOID find_work(VOID)
-{
-    g_sender_state.transmissions_in_progress->packet_status_bitmap;
-}
-
-UINT32 get_next_transmissionID(VOID) {
+PVOID find_work(VOID) {
     while (&g_transmission_cache.work_array[g_transmission_cache.next_chunk_index] == NULL) {
         g_transmission_cache.next_chunk_index++;
     }
-    UINT32 transmission_id = g_transmission_cache.work_array[g_transmission_cache.next_chunk_index];
-    if (g_sender_state.transmissions_in_progress[transmission_id].number_of_packets_in_transmission != 1) {
-
-    }
+    return g_transmission_cache.work_array[g_transmission_cache.next_chunk_index];
 }

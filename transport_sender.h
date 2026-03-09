@@ -40,7 +40,7 @@ typedef struct {
 typedef struct {
 
     // Transmission ID
-    ULONG64 transmission_id;
+    UINT32 transmission_id;
 
     // Pointer to its offset in the transmission data
     PBYTE data_to_send;
@@ -150,6 +150,6 @@ DWORD sender_minion(LPVOID param);
  * This will give the thread a chunk of a transmission to send & check,
  * or it will put it to sleep if no work is available.
  */
-PVOID find_work(VOID);
+PVOID find_work(PSENDER_MINION_INFO briefcase);
 
 UINT32 get_next_transmissionID(VOID);
