@@ -16,6 +16,10 @@ void create_receiver(void) {
 
     // reserve memory for every possible id
     g_receiver_state.transmission_info_sparse_array = VirtualAlloc(NULL, sizeof(TRANSMISSION_INFO) * MAXULONG32, MEM_RESERVE, PAGE_READWRITE);
+    if (g_receiver_state.transmission_info_sparse_array == NULL) {
+        printf("Failed to allocate memory for transmission info sparse array\n");
+        exit(1);
+    }
 
     // start the main receiver thread
     g_receiver_state.receiver_thread = CreateThread(NULL, 0, main_receiver_thread, NULL, 0, NULL);
@@ -35,7 +39,10 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
     ULONG64 pageDataEndsOn = (address_of_transmission_info + sizeof(TRANSMISSION_INFO)) & ~(PAGE_SIZE_IN_BYTES - 1);
 
     // when multiple threads commit the same memory, nothing happens. so this is thread safe
-    VirtualAlloc( (LPVOID) pageDataStartsOn, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES, MEM_COMMIT, PAGE_READWRITE);
+    if (VirtualAlloc( (LPVOID) pageDataStartsOn, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES, MEM_COMMIT, PAGE_READWRITE) == 0) {
+        printf("Failed to commit memory for transmission info sparse array\n");
+        exit(1);
+    }
     memset((LPVOID) pageDataStartsOn, 0, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES);
 
     // if someone else has started the initialization wait for it to finish
@@ -51,6 +58,10 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
 
     g_receiver_state.transmission_info_sparse_array[id].transmission_data = VirtualAlloc(NULL, num_packets * PACKET_PAYLOAD_SIZE_IN_BYTES,  MEM_RESERVE, PAGE_READWRITE);
 
+    if (g_receiver_state.transmission_info_sparse_array[id].transmission_data == NULL) {
+        printf("Failed to allocate memory for transmission data\n");
+        exit(1);
+    }
 
 
 
@@ -59,6 +70,14 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
 
     // This just commits it straight up, as we get bigger file sizes, I will do the same reserve and commit strategy
     g_receiver_state.transmission_info_sparse_array[id].status_bitmap = VirtualAlloc(NULL, numBitmaps * sizeof(ULONG64),   MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+
+    if (g_receiver_state.transmission_info_sparse_array[id].status_bitmap == NULL) {
+        printf("Failed to allocate memory for transmission status bitmap\n");
+        exit(1);
+    }
+
+
+
     memset(g_receiver_state.transmission_info_sparse_array[id].status_bitmap, 0 , numBitmaps * sizeof(ULONG64));
     // if (num_packets % 64 != 0) {
     //     ULONG64 num_remaining_packets = num_packets % 64;
@@ -130,7 +149,10 @@ void document_received_transmission(PDATA_PACKET pkt) {
     ULONG64 pageDataStartsOn = addressToWrite & ~(PAGE_SIZE_IN_BYTES - 1);
     ULONG64 pageDataEndsOn = (addressToWrite + PACKET_PAYLOAD_SIZE_IN_BYTES) & ~(PAGE_SIZE_IN_BYTES - 1);
 
-    VirtualAlloc( (LPVOID) pageDataStartsOn, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES, MEM_COMMIT, PAGE_READWRITE);
+    if (VirtualAlloc( (LPVOID) pageDataStartsOn, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES, MEM_COMMIT, PAGE_READWRITE) == 0) {
+        printf("Failed to commit memory for transmission data\n");
+        exit(1);
+    }
 
 
 
