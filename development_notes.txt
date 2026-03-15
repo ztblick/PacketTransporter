@@ -32,3 +32,30 @@ I am sure we can expand the buffer size or improve how the students call receive
 One thing of note: the trace does show that the wire to NIC thread can
 improve. It seems to wait too long in between runs. I wonder if it is scanning
 through network space inefficiently? Perhaps we can skip 64 slots at a time!
+
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Debug notes:
+
+When doing multithreaded tests, we encounter an interesting situation:
+Thread 1 is validating packet with ID 0x155. It should have a full payload
+of 0x155 bytes, but only the first field has data. The rest of the bytes
+are empty.
+
+At the same time, thread 2 is trying to grab a packet with the same ID, 155.
+It is freeing its slots, and it runs into an error where the slot is already
+freed. It also is looking at slot 0.
+
+This implies that threads 1 and 2 grabbed the same packet at the same time,
+which should not be possible. I wonder if thread 2 got a lock on the PM after it
+was released by thread 1 but before thread 1 could indicate that the data was stale?
+
+
+Key observations:
+- multiple threads are failing at once
+- bits that should be set have been cleared
+- at some point, PMs are being claimed that already have slots
+- happens with multiple senders and one receiver --> implies that corruption
+  occurs when senders race with each other, somehow...
+
+NEXT STEP: do more debug checks, asserts in sender code...
