@@ -1,37 +1,37 @@
 #pragma once
 
-typedef struct {
-
-    // Bitmap (pointer) -- each bit indicates if a "chunk" of the
-    // transmission has been assigned to a worker
-
-    // Bitmap (pointer) -- each bit indicates if the "chunk" has
-    // been fully sent and ACKed
-
-    // Pointer to the transmission's data (given from send_transmission)
-
-} SENDER_TRANSMISSION_INFO, *PSENDER_TRANSMISSION_INFO;
-
-typedef struct {
-
-    // Transmission ID
-
-    // Pointer to its offset in the transmission data
-
-    // Size of the chunk that is being packetized
-
-    // Bitmap for packet status (ACKed or not) -- but needs to be accessed by sender_listener somehow...
-
-} WORKER_THREAD_INFO, *PWWORKER_THREAD_INFO;
-
-typedef struct {
-
-    // Queue of transmission IDs to indicate which
-    // transmission should be worked on next
-
-    // Sparse array (index = transmission ID) of transmission info structs
-
-} SENDER_STATE, *PSENDER_STATE;
+// typedef struct {
+//
+//     // Bitmap (pointer) -- each bit indicates if a "chunk" of the
+//     // transmission has been assigned to a worker
+//
+//     // Bitmap (pointer) -- each bit indicates if the "chunk" has
+//     // been fully sent and ACKed
+//
+//     // Pointer to the transmission's data (given from send_transmission)
+//
+// } SENDER_TRANSMISSION_INFO, *PSENDER_TRANSMISSION_INFO;
+//
+// typedef struct {
+//
+//     // Transmission ID
+//
+//     // Pointer to its offset in the transmission data
+//
+//     // Size of the chunk that is being packetized
+//
+//     // Bitmap for packet status (ACKed or not) -- but needs to be accessed by sender_listener somehow...
+//
+// } WORKER_THREAD_INFO, *PWWORKER_THREAD_INFO;
+//
+// typedef struct {
+//
+//     // Queue of transmission IDs to indicate which
+//     // transmission should be worked on next
+//
+//     // Sparse array (index = transmission ID) of transmission info structs
+//
+// } SENDER_STATE, *PSENDER_STATE;
 
 
 
