@@ -31,6 +31,11 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
     ULONG64 num_packets = (length + MAX_PAYLOAD_SIZE - 1) / MAX_PAYLOAD_SIZE;
     current_transmission->number_of_packets_in_transmission = num_packets;
     current_transmission->packet_status_bitmap = malloc((num_packets + 7) / 8);
+    current_transmission->total_bytes = length;
+
+
+
+    g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.next_chunk_index] = transmission_id;
 
     
     return TRANSMISSION_ACCEPTED;

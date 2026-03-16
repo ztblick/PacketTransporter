@@ -8,6 +8,7 @@
 #define MAX_CHUNK_SIZE_IN_PACKETS   4
 #define SENDER_MINION_COUNT         2
 #define WORK_ARRAY_SIZE             16
+#define EMPTY_WORK_ARRAY_ID         UINT32_MAX
 
 
 typedef struct {
@@ -32,6 +33,9 @@ typedef struct {
     // Initialized to describe the number of packets needed to send all of the transmission's data.
     ULONG64 number_of_packets_in_transmission;
 
+    // Total number of bytes in the transmission's data
+    ULONG64 total_bytes;
+
     // Pointer to the transmission's data (given from send_transmission)
     PBYTE data;
 
@@ -50,6 +54,9 @@ typedef struct {
 
     // Number of packets in transmission
     ULONG64 n_packets_in_transmission;
+
+    // Which chunk this minion was assigned (used to determine packet range)
+    ULONG64 chunk_index;
 
 } SENDER_MINION_INFO, *PSENDER_MINION_INFO;
 
@@ -150,6 +157,6 @@ DWORD sender_minion(LPVOID param);
  * This will give the thread a chunk of a transmission to send & check,
  * or it will put it to sleep if no work is available.
  */
-PVOID find_work(PSENDER_MINION_INFO briefcase);
+VOID find_work(PSENDER_MINION_INFO briefcase);
 
 UINT32 get_next_transmission_id(VOID);

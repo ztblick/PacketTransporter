@@ -24,6 +24,9 @@ VOID create_sender(VOID)
         MEM_RESERVE | MEM_COMMIT,
         PAGE_READWRITE);
 
+    // Filling work array with default values
+    memset(g_transmission_cache.work_array, EMPTY_WORK_ARRAY_ID, sizeof(UINT32) * WORK_ARRAY_SIZE);
+
     g_transmission_cache.next_chunk_index = 0;
 
     // Create sender listener thread.
@@ -143,30 +146,77 @@ DWORD sender_minion(LPVOID param)
 {
     SENDER_MINION_INFO briefcase = {0};
     PSENDER_MINION_INFO p_briefcase = &briefcase;
-    find_work(p_briefcase);
+
+    while (TRUE)
+    {
+        find_work(p_briefcase);
+
+        if (p_briefcase->transmission_id == EMPTY_WORK_ARRAY_ID) {
+            break;
+        }
+
+        packetize_contiguous(p_briefcase->data_to_send, p_briefcase->bytes_to_send, briefcase);
+
+        PULONG64 bitmap = g_sender_state.transmissions_in_progress[p_briefcase->transmission_id].packet_status_bitmap;
+        ULONG64 first_packet = p_briefcase->chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
+        ULONG64 num_packets = (p_briefcase->bytes_to_send + MAX_PAYLOAD_SIZE - 1) / MAX_PAYLOAD_SIZE;
+
+        boolean all_acked = FALSE;
+        while (!all_acked)
+        {
+            Sleep(LATENCY_MS);
+            all_acked = TRUE;
+
+            for (int i = 0; i < num_packets; i++)
+            {
+                ULONG64 packet_num = first_packet + i;
+
+                if (!(bitmap[packet_num / 64] & 1ULL << (packet_num % 64)))
+                {
+                    all_acked = FALSE;
+                }
+
+            }
+        }
+    }
+
     return 0;
 }
 
-PVOID find_work(PSENDER_MINION_INFO briefcase) {
+VOID find_work(PSENDER_MINION_INFO briefcase) {
     // add big ahh lock
+
     briefcase->transmission_id = get_next_transmission_id();
-    briefcase->data_to_send = (PBYTE)(briefcase->transmission_id + g_transmission_cache.next_chunk_index * MAX_PAYLOAD_SIZE);
+    if (briefcase->transmission_id == EMPTY_WORK_ARRAY_ID) {
+        return;
+    }
 
-    SENDER_TRANSMISSION_INFO transmission_info = g_sender_state.transmissions_in_progress[briefcase->transmission_id];
+    PSENDER_TRANSMISSION_INFO info = &g_sender_state.transmissions_in_progress[briefcase->transmission_id];
 
-    briefcase->bytes_to_send = transmission_info.number_of_packets_in_transmission
+    ULONG64 chunk_index = InterlockedIncrement64((volatile LONG64*) &info->next_chunk_index) - 1;
+
+    briefcase->chunk_index = chunk_index;
+
+    briefcase->data_to_send = (info->data + chunk_index * MAX_CHUNK_SIZE_IN_PACKETS * MAX_PAYLOAD_SIZE);
+
+
+    ULONG64 byte_offset = chunk_index * MAX_CHUNK_SIZE_IN_PACKETS * MAX_PAYLOAD_SIZE;
+
+
+    briefcase->bytes_to_send = min(info->total_bytes - byte_offset, MAX_CHUNK_SIZE_IN_PACKETS * MAX_PAYLOAD_SIZE);
+
+
 }
 
 UINT32 get_next_transmission_id(VOID) {
-    while (g_transmission_cache.work_array[g_transmission_cache.next_chunk_index] == 0)
+    while (g_transmission_cache.work_array[g_transmission_cache.next_chunk_index] == EMPTY_WORK_ARRAY_ID)
     {
         g_transmission_cache.next_chunk_index++;
-
     }
 
 
     if (g_transmission_cache.next_chunk_index >= WORK_ARRAY_SIZE) {
-        return 0;
+        DebugBreak();
     }
 
     return g_transmission_cache.work_array[g_transmission_cache.next_chunk_index];
