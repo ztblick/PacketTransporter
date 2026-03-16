@@ -28,7 +28,7 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
     PSENDER_TRANSMISSION_INFO current_transmission = &g_sender_state.transmissions_in_progress[transmission_id];
     current_transmission->data = data;
 
-    ULONG64 num_packets = length / MAX_PAYLOAD_SIZE;
+    ULONG64 num_packets = (length + MAX_PAYLOAD_SIZE - 1) / MAX_PAYLOAD_SIZE;
     current_transmission->number_of_packets_in_transmission = num_packets;
     current_transmission->packet_status_bitmap = malloc((num_packets + 7) / 8);
 

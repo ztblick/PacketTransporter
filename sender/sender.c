@@ -158,7 +158,8 @@ PVOID find_work(PSENDER_MINION_INFO briefcase) {
 }
 
 UINT32 get_next_transmission_id(VOID) {
-    while (&g_transmission_cache.work_array[g_transmission_cache.next_chunk_index] == NULL) {
+    while (g_transmission_cache.work_array[g_transmission_cache.next_chunk_index] == 0)
+    {
         g_transmission_cache.next_chunk_index++;
     }
     return g_transmission_cache.work_array[g_transmission_cache.next_chunk_index];
