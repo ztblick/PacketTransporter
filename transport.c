@@ -8,6 +8,10 @@
  */
 
 #include "transport.h"
+#include "transport_receiver.h"
+
+RECEIVER_STATE g_receiver_state;
+
 
 void create_transport_layer(void) {
     return;
@@ -28,11 +32,5 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length) {
 
 
 int receive_transmission(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
-
-    // TODO: Student implementation
-    // - Receive packets via receive_packet() or try_receive_packet()
-    // - Reassemble packets into complete transmissions
-    // - When complete, fill in out_id, dest, out_length and return 1
-
-    return NO_TRANSMISSION_AVAILABLE;
+    return reciever_handler(transmission_id, dest, out_length, timeout_ms);
 }

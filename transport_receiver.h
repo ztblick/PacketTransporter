@@ -1,6 +1,6 @@
 #pragma once
 
-#include "utils.h"
+#include "network.h"
 #include "transport_packets.h"
 
 /**
@@ -26,6 +26,7 @@ typedef struct {
     PVOID transmission_data;
     volatile ULONG64 num_packets_left;
     HANDLE transmission_complete_event;
+    volatile size_t file_size_in_bytes;
 } TRANSMISSION_INFO, *PTRANSMISSION_INFO;
 
 typedef struct {
@@ -39,8 +40,6 @@ typedef struct {
     // This event is used to wake the main receiver thread
     // when packets are added to the cache.
     HANDLE packets_waiting_in_cache;
-
-
 
 } PACKET_CACHE, *PPACKET_CACHE;
 
@@ -106,4 +105,8 @@ BYTE cache_packet(PDATA_PACKET pkt);
  * @return
  */
 DWORD main_receiver_thread(LPVOID param);
+
+#define TRANSMISSION_RECEIVED       0
+#define NO_TRANSMISSION_AVAILABLE   1
+int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms);
 
