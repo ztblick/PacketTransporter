@@ -91,6 +91,8 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
     g_receiver_state.transmission_info_sparse_array[id].transmission_complete_event = CreateEvent(NULL, AUTO_RESET, FALSE, NULL);
 
     _interlockedbittestandset64(&g_receiver_state.transmission_info_sparse_array[id].initializationComplete, 1);
+
+
 }
 
 /**
@@ -159,7 +161,8 @@ void document_received_transmission(PDATA_PACKET pkt) {
     memcpy((PVOID) addressToWrite, &pkt->data, PACKET_PAYLOAD_SIZE_IN_BYTES);
 
 
-
+    // if we have the last packet, change the size
+    InterlockedAdd64(&transmission_info->file_size_in_bytes, pkt->bytes_in_payload);
 
     ULONG64 packetsLeft = InterlockedDecrement64(&transmission_info->num_packets_left);
 

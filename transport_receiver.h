@@ -29,6 +29,7 @@ typedef struct {
     PVOID transmission_data;
     volatile ULONG64 num_packets_left;
     HANDLE transmission_complete_event;
+    volatile size_t file_size_in_bytes;
 } TRANSMISSION_INFO, *PTRANSMISSION_INFO;
 
 typedef struct {
