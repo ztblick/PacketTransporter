@@ -161,7 +161,14 @@ UINT32 get_next_transmission_id(VOID) {
     while (g_transmission_cache.work_array[g_transmission_cache.next_chunk_index] == 0)
     {
         g_transmission_cache.next_chunk_index++;
+
     }
+
+
+    if (g_transmission_cache.next_chunk_index >= WORK_ARRAY_SIZE) {
+        return 0;
+    }
+
     return g_transmission_cache.work_array[g_transmission_cache.next_chunk_index];
 }
 
