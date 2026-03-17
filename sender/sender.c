@@ -69,7 +69,7 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
         packet.bytes_in_header = 16;
         packet.bytes_in_data_fields = 16;
 
-        packet.index_in_transmission = i / MAX_PAYLOAD_SIZE;
+        packet.index_in_transmission = minion_info.chunk_index * MAX_CHUNK_SIZE_IN_PACKETS + (i / MAX_PAYLOAD_SIZE);
         packet.must_be_zero = 0;
         packet.n_packets_in_transmission = minion_info.n_packets_in_transmission;
         packet.transmission_id = minion_info.transmission_id;
@@ -144,33 +144,43 @@ DWORD sender_listener(LPVOID param)
 
 DWORD sender_minion(LPVOID param)
 {
+    // Init our briefcase to just 0 values
     SENDER_MINION_INFO briefcase = {0};
     PSENDER_MINION_INFO p_briefcase = &briefcase;
 
     while (TRUE)
     {
+        // Find our next work and update the briefcase with its info.
         find_work(p_briefcase);
 
+        // Check that we were able to find any work (if not, break).
         if (p_briefcase->transmission_id == EMPTY_WORK_ARRAY_ID) {
             break;
         }
 
+        // Packetize and send the data from the briefcase.
         packetize_contiguous(p_briefcase->data_to_send, p_briefcase->bytes_to_send, briefcase);
 
+        // Now we set up the ack'ing
         PULONG64 bitmap = g_sender_state.transmissions_in_progress[p_briefcase->transmission_id].packet_status_bitmap;
         ULONG64 first_packet = p_briefcase->chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
         ULONG64 num_packets = (p_briefcase->bytes_to_send + MAX_PAYLOAD_SIZE - 1) / MAX_PAYLOAD_SIZE;
 
+        // While loop until everything is successfully ack'd.
         boolean all_acked = FALSE;
         while (!all_acked)
         {
-            Sleep(LATENCY_MS);
+            // Wait for the network latency before checking. Slight magic number but wanted
+            // to add a bit of time for any overhead.
+            Sleep(LATENCY_MS * 1.2);
             all_acked = TRUE;
 
+            // Go through the number of packets this minion is supposed to be working on.
             for (int i = 0; i < num_packets; i++)
             {
                 ULONG64 packet_num = first_packet + i;
 
+                // Check that the current packet is ack'd, and if not, set all_acked to false.
                 if (!(bitmap[packet_num / 64] & 1ULL << (packet_num % 64)))
                 {
                     all_acked = FALSE;
@@ -181,15 +191,21 @@ DWORD sender_minion(LPVOID param)
 
         PSENDER_TRANSMISSION_INFO info = &g_sender_state.transmissions_in_progress[p_briefcase->transmission_id];
 
+        // Check ALL of our packets in the transmission to see if the entire transmission is done.
         boolean transmission_done = TRUE;
-        for (ULONG64 i = 0; i < info->number_of_packets_in_transmission; i++) {
-            if (!(bitmap[i / 64] & (1ULL << (i % 64)))) {
+        for (int i = 0; i < info->number_of_packets_in_transmission; i++)
+        {
+            if (!(bitmap[i / 64] & 1ULL << (i % 64)))
+            {
+                // If the entire transmission isn't done, just break.
                 transmission_done = FALSE;
                 break;
             }
         }
 
-        if (transmission_done) {
+        // Call our sending complete event if the entire transmission is finished.
+        if (transmission_done)
+        {
             SetEvent(info->sending_complete_event);
         }
 
@@ -202,6 +218,7 @@ DWORD sender_minion(LPVOID param)
 VOID find_work(PSENDER_MINION_INFO briefcase) {
     // add big ahh lock
 
+    // Return if we can't find any transmissions to work on next.
     briefcase->transmission_id = get_next_transmission_id();
     if (briefcase->transmission_id == EMPTY_WORK_ARRAY_ID) {
         return;
@@ -209,32 +226,35 @@ VOID find_work(PSENDER_MINION_INFO briefcase) {
 
     PSENDER_TRANSMISSION_INFO info = &g_sender_state.transmissions_in_progress[briefcase->transmission_id];
 
+    // Interlocked increment our chunk index so it is safe across the multiple threads.
     ULONG64 chunk_index = InterlockedIncrement64((volatile LONG64*) &info->next_chunk_index) - 1;
 
+    // Fill the briefcase.
     briefcase->chunk_index = chunk_index;
+    briefcase->n_packets_in_transmission = info->number_of_packets_in_transmission;
+    briefcase->data_to_send = info->data + chunk_index * MAX_CHUNK_SIZE_IN_PACKETS * MAX_PAYLOAD_SIZE;
 
-    briefcase->data_to_send = (info->data + chunk_index * MAX_CHUNK_SIZE_IN_PACKETS * MAX_PAYLOAD_SIZE);
-
-
+    // Calc the number of bytes we need to send (make sure we get the right amount if
+    // at the last packet which might not be totally full)
     ULONG64 byte_offset = chunk_index * MAX_CHUNK_SIZE_IN_PACKETS * MAX_PAYLOAD_SIZE;
-
-
     briefcase->bytes_to_send = min(info->total_bytes - byte_offset, MAX_CHUNK_SIZE_IN_PACKETS * MAX_PAYLOAD_SIZE);
 
 
 }
 
 UINT32 get_next_transmission_id(VOID) {
-    while (g_transmission_cache.work_array[g_transmission_cache.next_chunk_index] == EMPTY_WORK_ARRAY_ID)
+    // Circular buffer so doesn't go out of bounds
+    UINT32 slots_checked = 0;
+    while (g_transmission_cache.work_array[g_transmission_cache.next_chunk_index % WORK_ARRAY_SIZE] == EMPTY_WORK_ARRAY_ID)
     {
         g_transmission_cache.next_chunk_index++;
+        slots_checked++;
+        if (slots_checked >= WORK_ARRAY_SIZE) 
+        {
+            return EMPTY_WORK_ARRAY_ID;
+        }
     }
 
-
-    if (g_transmission_cache.next_chunk_index >= WORK_ARRAY_SIZE) {
-        DebugBreak();
-    }
-
-    return g_transmission_cache.work_array[g_transmission_cache.next_chunk_index];
+    return g_transmission_cache.work_array[g_transmission_cache.next_chunk_index % WORK_ARRAY_SIZE];
 }
 
