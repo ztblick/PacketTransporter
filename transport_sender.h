@@ -36,6 +36,8 @@ typedef struct {
     // Total number of bytes in the transmission's data
     ULONG64 total_bytes;
 
+    HANDLE sending_complete_event;
+
     // Pointer to the transmission's data (given from send_transmission)
     PBYTE data;
 

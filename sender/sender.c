@@ -178,7 +178,23 @@ DWORD sender_minion(LPVOID param)
 
             }
         }
+
+        PSENDER_TRANSMISSION_INFO info = &g_sender_state.transmissions_in_progress[p_briefcase->transmission_id];
+
+        boolean transmission_done = TRUE;
+        for (ULONG64 i = 0; i < info->number_of_packets_in_transmission; i++) {
+            if (!(bitmap[i / 64] & (1ULL << (i % 64)))) {
+                transmission_done = FALSE;
+                break;
+            }
+        }
+
+        if (transmission_done) {
+            SetEvent(info->sending_complete_event);
+        }
+
     }
+
 
     return 0;
 }

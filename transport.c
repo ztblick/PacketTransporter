@@ -25,6 +25,7 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
     // - Break data into packets tagged with transmission_id
     // - Send packets via send_packet()
 
+
     PSENDER_TRANSMISSION_INFO current_transmission = &g_sender_state.transmissions_in_progress[transmission_id];
     current_transmission->data = data;
 
@@ -32,11 +33,12 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
     current_transmission->number_of_packets_in_transmission = num_packets;
     current_transmission->packet_status_bitmap = malloc((num_packets + 7) / 8);
     current_transmission->total_bytes = length;
-
-
+    current_transmission->sending_complete_event = CreateEvent(NULL, FALSE, FALSE, NULL);
 
     g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.next_chunk_index] = transmission_id;
 
+
+    WaitForSingleObject(current_transmission->sending_complete_event, INFINITE);
     
     return TRANSMISSION_ACCEPTED;
 }
