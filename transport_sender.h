@@ -7,7 +7,7 @@
  */
 #define MAX_CHUNK_SIZE_IN_PACKETS   4
 #define SENDER_MINION_COUNT         2
-#define WORK_ARRAY_SIZE             16
+#define WORK_ARRAY_SIZE             256
 #define EMPTY_WORK_ARRAY_ID         UINT32_MAX
 
 
@@ -65,16 +65,13 @@ typedef struct {
 /**
  * This data structure keeps track of the transmissions in the order in which they are received.
  * It facilitates the minions as they seek out the next chunk of work.
+ * Uses a circular buffer with separate read/write indices.
  */
 typedef struct {
-    // TODO implement an array and an index that will allow us to easily move from one transmission to the next
-
     PUINT32 work_array;
-    volatile ULONG64 next_chunk_index;
-
-    // TODO think about adding a new transmission when it is received
-
-    // TODO think about what happens when a transmission's final chunk is assigned
+    // Had to seperate these two
+    volatile ULONG64 next_read_index;
+    volatile ULONG64 next_write_index;
 } TRANSMISSION_CACHE;
 
 typedef struct {

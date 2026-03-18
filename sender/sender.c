@@ -7,7 +7,7 @@
 
 
 SENDER_STATE g_sender_state;
-TRANSMISSION_CACHE g_transmission_cache;
+CRITICAL_SECTION g_work_array_lock;
 
 
 VOID create_sender(VOID)
@@ -19,19 +19,21 @@ VOID create_sender(VOID)
         PAGE_READWRITE);
 
 
-    g_transmission_cache.work_array = (PUINT32)VirtualAlloc(NULL,
+    g_sender_state.transmissions_queue.work_array = (PUINT32)VirtualAlloc(NULL,
         sizeof(UINT32) * WORK_ARRAY_SIZE,
         MEM_RESERVE | MEM_COMMIT,
         PAGE_READWRITE);
 
     // Filling work array with default values
-    memset(g_transmission_cache.work_array, EMPTY_WORK_ARRAY_ID, sizeof(UINT32) * WORK_ARRAY_SIZE);
+    memset(g_sender_state.transmissions_queue.work_array, EMPTY_WORK_ARRAY_ID, sizeof(UINT32) * WORK_ARRAY_SIZE);
 
-    g_transmission_cache.next_chunk_index = 0;
+    g_sender_state.transmissions_queue.next_read_index = 0;
+    g_sender_state.transmissions_queue.next_write_index = 0;
 
     // Create sender listener thread.
     CreateThread(NULL, 0, sender_listener, NULL, 0, NULL);
 
+    InitializeCriticalSection(&g_work_array_lock);
 
     // Create our minion threads.
     for (int i = 0; i < SENDER_MINION_COUNT; i++) {
@@ -153,9 +155,10 @@ DWORD sender_minion(LPVOID param)
         // Find our next work and update the briefcase with its info.
         find_work(p_briefcase);
 
-        // Check that we were able to find any work (if not, break).
+        // Check that we were able to find any work (if not, wait and retry).
         if (p_briefcase->transmission_id == EMPTY_WORK_ARRAY_ID) {
-            break;
+            Sleep(10);
+            continue;
         }
 
         // Packetize and send the data from the briefcase.
@@ -215,11 +218,14 @@ DWORD sender_minion(LPVOID param)
     return 0;
 }
 
-VOID find_work(PSENDER_MINION_INFO briefcase) {
-    // add big ahh lock??
+VOID find_work(PSENDER_MINION_INFO briefcase)
+{
+    // Get our work array lock before we modify the work array in get next transmission ID
+    EnterCriticalSection(&g_work_array_lock);
+    briefcase->transmission_id = get_next_transmission_id();
+    LeaveCriticalSection(&g_work_array_lock);
 
     // Return if we can't find any transmissions to work on next.
-    briefcase->transmission_id = get_next_transmission_id();
     if (briefcase->transmission_id == EMPTY_WORK_ARRAY_ID) {
         return;
     }
@@ -228,6 +234,15 @@ VOID find_work(PSENDER_MINION_INFO briefcase) {
 
     // Interlocked increment our chunk index so it is safe across the multiple threads.
     ULONG64 chunk_index = InterlockedIncrement64((volatile LONG64*) &info->next_chunk_index) - 1;
+
+    // Check if this chunk is past the end of the transmission
+    ULONG64 first_packet_of_chunk = chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
+    if (first_packet_of_chunk >= info->number_of_packets_in_transmission)
+    {
+        briefcase->transmission_id = EMPTY_WORK_ARRAY_ID;
+        
+        return;
+    }
 
     // Fill the briefcase.
     briefcase->chunk_index = chunk_index;
@@ -245,9 +260,10 @@ VOID find_work(PSENDER_MINION_INFO briefcase) {
 UINT32 get_next_transmission_id(VOID) {
     // Circular buffer so doesn't go out of bounds
     UINT32 slots_checked = 0;
-    while (g_transmission_cache.work_array[g_transmission_cache.next_chunk_index % WORK_ARRAY_SIZE] == EMPTY_WORK_ARRAY_ID)
+    while (g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.
+        next_read_index % WORK_ARRAY_SIZE] == EMPTY_WORK_ARRAY_ID)
     {
-        g_transmission_cache.next_chunk_index++;
+        g_sender_state.transmissions_queue.next_read_index++;
         slots_checked++;
         if (slots_checked >= WORK_ARRAY_SIZE) 
         {
@@ -255,6 +271,12 @@ UINT32 get_next_transmission_id(VOID) {
         }
     }
 
-    return g_transmission_cache.work_array[g_transmission_cache.next_chunk_index % WORK_ARRAY_SIZE];
-}
+    UINT32 return_ID = g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.
+        next_read_index % WORK_ARRAY_SIZE];
 
+    // Clear the ID I returned so it can be reused
+    g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.
+        next_read_index % WORK_ARRAY_SIZE] = EMPTY_WORK_ARRAY_ID;
+
+    return return_ID;
+}
