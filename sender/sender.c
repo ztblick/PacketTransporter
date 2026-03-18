@@ -263,6 +263,7 @@ UINT32 get_next_transmission_id(VOID) {
     while (g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.
         next_read_index % WORK_ARRAY_SIZE] == EMPTY_WORK_ARRAY_ID)
     {
+        // Increase the read index (where we are up to reading the transmission IDs in transmission queue)
         g_sender_state.transmissions_queue.next_read_index++;
         slots_checked++;
         if (slots_checked >= WORK_ARRAY_SIZE) 

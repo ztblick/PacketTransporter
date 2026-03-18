@@ -36,9 +36,12 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
     current_transmission->sending_complete_event = CreateEvent(NULL, FALSE, FALSE, NULL);
 
     // Add the transmission ID to the work array
-    ULONG64 write_index = g_sender_state.transmissions_queue.next_chunk_index % WORK_ARRAY_SIZE;
+    ULONG64 write_index = g_sender_state.transmissions_queue.next_write_index % WORK_ARRAY_SIZE;
     g_sender_state.transmissions_queue.work_array[write_index] = transmission_id;
-    g_sender_state.transmissions_queue.next_chunk_index++;
+
+    // Increase the write index (How many IDs we have written in TOTAL to the transmission queue, this is
+    // different from the index we are on in get_next_transmission_id)
+    g_sender_state.transmissions_queue.next_write_index++;
 
 
     WaitForSingleObject(current_transmission->sending_complete_event, INFINITE);
