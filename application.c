@@ -157,6 +157,10 @@ void app_receiver(void) {
     PAPP_TRANSMISSION_INFO info;
     int status;
     unsigned char result;
+    ULONG64 slot = 0;
+    ULONG64 row = 0;
+    ULONG64 offset = 0;
+    ULONG64 mask = 0;
 
     // Wait for simulation start event
     WaitForSingleObject(simulation_begin, INFINITE);
