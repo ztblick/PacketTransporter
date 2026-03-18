@@ -19,6 +19,8 @@
 // This defines the number of packets that are saved in the circular buffer.
 // Cache_packet writes into it and main receiver thread pulls from it.
 #define BUFFER_SIZE_IN_PACKETS 128
+#define NUM_BITS_IN_CHUNK 64
+#define MAX_ATTEMPTS 16
 
 typedef struct {
 
@@ -33,22 +35,27 @@ typedef struct {
     // This is the circular buffer that cache packet writes into
     // and the main thread reads from.
     DATA_PACKET packet_space[BUFFER_SIZE_IN_PACKETS];
-    volatile UINT32 next_available_buffer_slot;
-    volatile UINT32 buffer_slot_of_next_packet_to_process;
-
+    // Writer index
+    volatile UINT32 slot_counter_writer;
+    // Reader index
+    volatile UINT32 slot_counter_reader;
+    // TODO: Initialize these bitmaps
+    // Bitmap which indicate that a thread has taken a slot on the cache and is about to write into it
+    ULONG64 reserve_cache_slot[2];
+    // Bitmap which indicates which cache slots have been finished writing into
+    // We need this bitmap in order to handle a case where we reserve a cache slot, but we haven't
+    // finished writing into it. A case where we could try to read before we write into the cache slot
+    ULONG64 is_cache_slot_written[2];
     // This event is used to wake the main receiver thread
     // when packets are added to the cache.
     HANDLE packets_waiting_in_cache;
-
-
-
 } PACKET_CACHE, *PPACKET_CACHE;
 
 typedef struct {
     // This sparse array stores the transmission information for transmission ID #N at index N in the array.
     PTRANSMISSION_INFO transmission_info_sparse_array;
 
-    // this is the thread that processes packets in the cacheq
+    // this is the thread that processes packets in the cache
     HANDLE receiver_thread;
 
     PACKET_CACHE packet_cache;
@@ -86,14 +93,14 @@ void document_received_transmission(PDATA_PACKET pkt);
 void create_receiver(void);
 
 #define PACKET_CACHE_SUCCESSFUL 1
-#define PACKED_CACHE_FAIL       0
+#define PACKET_CACHE_FAIL       0
 /**
  * @brief Adds the given packet to a queue of packets to be processed.
  * @param pkt The packet to be added.
  * @retval 1 Packet is successfully received
  * @retval 0 Packet is rejected -- this can happen when the buffer is full.
  */
-BYTE cache_packet(PDATA_PACKET pkt);
+BYTE write_to_cache(PDATA_PACKET pkt);
 
 /**
  * @par Woken by cache packet when packets are available to be processed.
@@ -106,4 +113,14 @@ BYTE cache_packet(PDATA_PACKET pkt);
  * @return
  */
 DWORD main_receiver_thread(LPVOID param);
+
+/**
+ * @brief Adds the given packet to a queue of packets to be processed.
+ * @param pkt The packet to be added.
+ * @retval 1 Packet from cache was succesfully read
+ * @retval 0 Packet is rejected -- this can happen when the buffer is full.
+ */
+#define PACKET_SUCCESSFULLY_READ 1
+#define PACKET_FAILED_TO_READ 0
+BYTE read_from_cache(PDATA_PACKET Noah_Packet);
 

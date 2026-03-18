@@ -6,6 +6,26 @@
 
 RECEIVER_STATE g_receiver_state;
 
+// Initializes the fields inside PACKET_CACHE cache
+void initialize_cache(void){
+    // initialize the event that signals when packets are available
+    g_receiver_state.packet_cache.packets_waiting_in_cache =
+        CreateEvent(NULL, AUTO_RESET, FALSE, NULL);
+
+    // initialize the circular buffer
+    g_receiver_state.packet_cache.slot_counter_reader = 0;
+    g_receiver_state.packet_cache.slot_counter_writer = 0;
+
+    // Initialize the buffer that we will write into
+    memset(g_receiver_state.packet_cache.packet_space, 0, BUFFER_SIZE_IN_PACKETS);
+
+    // Initialize Bitmaps
+    memset(g_receiver_state.packet_cache.reserve_cache_slot, 0,
+        sizeof(g_receiver_state.packet_cache.reserve_cache_slot));
+    memset(g_receiver_state.packet_cache.is_cache_slot_written, 0,
+        sizeof(g_receiver_state.packet_cache.is_cache_slot_written));
+}
+
 /**
  * Initializes data structures and launches threads for the receiver:
  *  - Reserves the sparse array for all transmission info entries.
@@ -19,12 +39,7 @@ void create_receiver(void) {
     // start the main receiver thread
     g_receiver_state.receiver_thread = CreateThread(NULL, 0, main_receiver_thread, NULL, 0, NULL);
 
-    // initialize the event that signals when packets are available
-    g_receiver_state.packet_cache.packets_waiting_in_cache = CreateEvent(NULL, AUTO_RESET, FALSE, NULL);
-
-    // initialize the circular buffer
-    g_receiver_state.packet_cache.buffer_slot_of_next_packet_to_process = 0;
-    g_receiver_state.packet_cache.next_available_buffer_slot = 0;
+    initialize_cache();
 }
 
 
