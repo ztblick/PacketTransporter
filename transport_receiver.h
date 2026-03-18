@@ -24,6 +24,9 @@
 
 typedef struct {
 
+    volatile ULONG64 initializationStarted;
+    volatile ULONG64 initializationComplete;
+
     volatile PULONG64 status_bitmap;
     PVOID transmission_data;
     volatile ULONG64 num_packets_left;
@@ -51,6 +54,8 @@ typedef struct {
     // when packets are added to the cache.
     HANDLE packets_waiting_in_cache;
 
+
+//todo see if we want a lock, or see how to synchronize
 } PACKET_CACHE, *PPACKET_CACHE;
 
 typedef struct {
