@@ -11,10 +11,9 @@
 #include "transport_sender.h"
 #include "transport_receiver.h"
 
-RECEIVER_STATE g_receiver_state;
-
 void create_transport_layer(void) {
     create_sender();
+    create_receiver();
     return;
 }
 
@@ -30,6 +29,10 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
 
 
     PSENDER_TRANSMISSION_INFO current_transmission = &g_sender_state.transmissions_in_progress[transmission_id];
+
+    // Commit the transmission in the sparse array
+    VirtualAlloc(current_transmission, sizeof(SENDER_TRANSMISSION_INFO), MEM_COMMIT, PAGE_READWRITE);
+
     current_transmission->data = data;
 
     ULONG64 num_packets = (length + MAX_PAYLOAD_SIZE - 1) / MAX_PAYLOAD_SIZE;

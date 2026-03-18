@@ -15,7 +15,7 @@ VOID create_sender(VOID)
     g_sender_state.transmissions_in_progress =
         VirtualAlloc(NULL,
         MAXULONG32 * sizeof(SENDER_TRANSMISSION_INFO),
-        MEM_RESERVE | MEM_COMMIT,
+        MEM_RESERVE,
         PAGE_READWRITE);
 
 
@@ -59,7 +59,7 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
         }
 
         __try {
-            memcpy(packet.data, transmission_data + i, packet.bytes_in_payload);
+            memcpy(packet.data, (PBYTE)transmission_data + i, packet.bytes_in_payload);
         }
         __except (EXCEPTION_EXECUTE_HANDLER){
             // Not sure what to put here?

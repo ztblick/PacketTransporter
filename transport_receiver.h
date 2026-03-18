@@ -20,7 +20,9 @@
 // Cache_packet writes into it and main receiver thread pulls from it.
 #define BUFFER_SIZE_IN_PACKETS 128
 #define NUM_BITS_IN_CHUNK 64
+#ifndef MAX_ATTEMPTS
 #define MAX_ATTEMPTS 16
+#endif
 
 typedef struct {
 

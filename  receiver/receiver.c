@@ -158,7 +158,8 @@ void document_received_transmission(PDATA_PACKET pkt) {
 
     ULONG64 output;
     output = _interlockedbittestandset64(&transmission_info->status_bitmap[bitmapIndex], bitIndex);
-    if(output == 0) {
+    // If bit was already set, this is a duplicate packet — skip it
+    if(output == 1) {
         return;
     }
 
@@ -187,12 +188,7 @@ void document_received_transmission(PDATA_PACKET pkt) {
     }
 }
 
-DATA_PACKET remove_from_cache(void) {
 
-    ULONG64 index = (InterlockedIncrement64(&g_receiver_state.packet_cache.next_available_buffer_slot) - 1) % BUFFER_SIZE_IN_PACKETS;
-    return g_receiver_state.packet_cache.packet_space[index];
-
-}
 
 /**
  * @pre Assume the packet passed in has already been ACK'd in global data
@@ -260,8 +256,10 @@ DWORD main_receiver_thread(LPVOID param) {
 
         // wait for multiple object
        WaitForSingleObject(g_receiver_state.packet_cache.packets_waiting_in_cache, INFINITE);
-       DATA_PACKET packet = remove_from_cache();
-        ASSERT(packet.must_be_zero == 0)
+       DATA_PACKET packet;
+       if (read_from_cache(&packet) != PACKET_SUCCESSFULLY_READ) {
+           continue;
+       }
        document_received_transmission(&packet);
 
        COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
@@ -287,44 +285,43 @@ boolean check_transmission(UINT32 transmission_id) {
 
 
 int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
-    // TODO: Student implementation
-    // - Receive packets via receive_packet() or try_receive_packet()
-    // - Reassemble packets into complete transmissions
-    // - When complete, fill in out_id, dest, out_length and return 1
-    int result;
-    //Checks to see if the transmission has been initialized
 
-    ULONG64 time = time_now_ms();
-    ULONG64 deadline = time + timeout_ms;
+    // First check if already complete (fast path)
+    if (check_transmission(transmission_id)) {
+        PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
+        memcpy(dest, info->transmission_data, info->file_size_in_bytes);
+        *out_length = info->file_size_in_bytes;
+        return TRANSMISSION_RECEIVED;
+    }
+
+    // Wait for main_receiver_thread to finish processing all packets for this transmission.
+    // We don't call receive_packet here — main_receiver_thread handles that.
+    ULONG64 deadline = time_now_ms() + timeout_ms;
 
     while (time_now_ms() < deadline) {
 
         if (check_transmission(transmission_id)) {
-
             PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
-            size_t file_size = info->file_size_in_bytes;
-
-            // Write all data from global struct into this transmission's memory (dest)
-            memcpy(dest, info->transmission_data, file_size);
-
-            // Update the transmission's size (out_length)
-            *out_length = file_size;
-
-            // Finish the transmission and return
+            memcpy(dest, info->transmission_data, info->file_size_in_bytes);
+            *out_length = info->file_size_in_bytes;
             return TRANSMISSION_RECEIVED;
         }
 
-        //Calls receive packet at the dest and saves the result to check if transmission was successful
-        //Here I create a local data packet to memcopy space for the transmission
-        DATA_PACKET local_pkt;
-        result = receive_packet((PPACKET) &local_pkt, 10, ROLE_RECEIVER);
-
-        if (result == NO_PACKET_AVAILABLE) {
-            continue;
+        // Try to wait on the event if the transmission has been initialized.
+        // The sparse array uses MEM_RESERVE so pages may not be committed yet.
+        __try {
+            PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
+            if (info->transmission_complete_event != NULL) {
+                ULONG64 remaining = deadline - time_now_ms();
+                WaitForSingleObject(info->transmission_complete_event, (DWORD)min(remaining, 100));
+            } else {
+                Sleep(10);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            // Memory not committed yet — transmission hasn't been initialized
+            Sleep(10);
         }
-        write_to_cache(&local_pkt);
     }
 
-    //If we get to this point, we know runtime exceeded the deadline threshold
     return NO_TRANSMISSION_AVAILABLE;
 }
