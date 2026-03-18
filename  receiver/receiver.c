@@ -115,3 +115,61 @@ void document_received_transmission(PDATA_PACKET pkt) {
         SetEvent(transmission_info->transmission_complete_event);
     }
 }
+
+boolean check_transmission(UINT32 transmission_id) {
+
+    __try {
+        // check if it is initialized
+        if (g_receiver_state.transmission_info_sparse_array[transmission_id].num_packets_left == 0)
+            return TRUE;
+
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return FALSE;
+    }
+
+    return FALSE;
+}
+
+
+int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
+    // TODO: Student implementation
+    // - Receive packets via receive_packet() or try_receive_packet()
+    // - Reassemble packets into complete transmissions
+    // - When complete, fill in out_id, dest, out_length and return 1
+    int result;
+    //Checks to see if the transmission has been initialized
+
+    ULONG64 time = time_now_ms();
+    ULONG64 deadline = time + timeout_ms;
+
+    while (time_now_ms() < deadline) {
+
+        if (check_transmission(transmission_id)) {
+
+            PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
+            size_t file_size = info->file_size_in_bytes;
+
+            // Write all data from global struct into this transmission's memory (dest)
+            memcpy(dest, info->transmission_data, file_size);
+
+            // Update the transmission's size (out_length)
+            *out_length = file_size;
+
+            // Finish the transmission and return
+            return TRANSMISSION_RECEIVED;
+        }
+
+        //Calls receive packet at the dest and saves the result to check if transmission was successful
+        //Here I create a local data packet to memcopy space for the transmission
+        DATA_PACKET local_pkt;
+        result = receive_packet((PPACKET) &local_pkt, 10, ROLE_RECEIVER);
+
+        if (result == NO_PACKET_AVAILABLE) {
+            continue;
+        }
+        write_to_cache(&local_pkt);
+    }
+
+    //If we get to this point, we know runtime exceeded the deadline threshold
+    return NO_TRANSMISSION_AVAILABLE;
+}

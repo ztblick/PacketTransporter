@@ -8,18 +8,20 @@
  */
 
 #include "transport.h"
+#include "transport_receiver.h"
+
+RECEIVER_STATE g_receiver_state;
+
 
 void create_transport_layer(void) {
-
     return;
 }
-
 
 void free_transport_layer(void) {
     return;
 }
 
-int send_transmission(uint32_t transmission_id, void* data, size_t length) {
+int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length) {
 
     // TODO: Student implementation
     // - Break data into packets tagged with transmission_id
@@ -29,15 +31,8 @@ int send_transmission(uint32_t transmission_id, void* data, size_t length) {
 }
 
 
-int receive_transmission(uint32_t* out_id, void* dest, size_t* out_length, int timeout_ms) {
-
-    // TODO: Student implementation
-    // - Receive packets via receive_packet() or try_receive_packet()
-    // - Reassemble packets into complete transmissions
-
-    // - When complete, fill in out_id, dest, out_length and return 1
-
-    return NO_TRANSMISSION_AVAILABLE;
+int receive_transmission(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
+    return reciever_handler(transmission_id, dest, out_length, timeout_ms);
 }
 BYTE write_to_cache(PDATA_PACKET Niko_Packet) {
     // Make sure packet exists/if Niko does a bad job

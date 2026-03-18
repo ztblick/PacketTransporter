@@ -13,4 +13,4 @@ add_executable(PacketTransporter application.c network.c
         transport_packets.h
         transport_sender.h
         transport_receiver.h
-        " receiver/receiver.c")
+        network_test.c)
