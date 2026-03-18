@@ -35,7 +35,7 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
     current_transmission->total_bytes = length;
     current_transmission->sending_complete_event = CreateEvent(NULL, FALSE, FALSE, NULL);
 
-    // Write the transmission ID into the circular work array and advance the write index
+    // Add the transmission ID to the work array
     ULONG64 write_index = g_sender_state.transmissions_queue.next_chunk_index % WORK_ARRAY_SIZE;
     g_sender_state.transmissions_queue.work_array[write_index] = transmission_id;
     g_sender_state.transmissions_queue.next_chunk_index++;

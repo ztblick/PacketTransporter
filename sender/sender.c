@@ -216,7 +216,7 @@ DWORD sender_minion(LPVOID param)
 }
 
 VOID find_work(PSENDER_MINION_INFO briefcase) {
-    // add big ahh lock
+    // add big ahh lock??
 
     // Return if we can't find any transmissions to work on next.
     briefcase->transmission_id = get_next_transmission_id();
