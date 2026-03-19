@@ -1,38 +1,89 @@
 #pragma once
 
+/**
+ * When we split work across our sender minions (worker threads) we will need to know how many
+ * packets are assigned to a minion. This is the maximum number of contiguous packets
+ * we will assign to a minion at any time.
+ */
+#define MAX_CHUNK_SIZE_IN_PACKETS   4
+#define SENDER_MINION_COUNT         2
+#define WORK_ARRAY_SIZE             256
+#define EMPTY_WORK_ARRAY_ID         UINT32_MAX
+
+
 typedef struct {
 
-    // Bitmap (pointer) -- each bit indicates if a "chunk" of the
-    // transmission has been assigned to a worker
+    /**
+     * Bitmap (pointer): there is one bit per packet here. All are initially 0.
+     * When a packet is ACK'd, its bit is set. Only the sender-listener sets these bits.
+     *
+     * E.G. Let's say no packets are ACK'd:                         000
+     *      Then packet 1 is ACK'd. Sender listener sets its bit:   010
+     *
+     * TODO Ask LANDY about concerns about word tearing here. Do we need to do anything with read/write no fence?
+     **/
+    PULONG64 packet_status_bitmap;
 
-    // Bitmap (pointer) -- each bit indicates if the "chunk" has
-    // been fully sent and ACKed
+    /**
+     * This field will be atomically incremented. Each sender minion will do an interlocked increment on this
+     * field to claim the next chunk of packets.
+     */
+    volatile ULONG64 next_chunk_index;
+
+    // Initialized to describe the number of packets needed to send all of the transmission's data.
+    ULONG64 number_of_packets_in_transmission;
+
+    // Total number of bytes in the transmission's data
+    ULONG64 total_bytes;
+
+    HANDLE sending_complete_event;
 
     // Pointer to the transmission's data (given from send_transmission)
+    PBYTE data;
 
 } SENDER_TRANSMISSION_INFO, *PSENDER_TRANSMISSION_INFO;
 
 typedef struct {
 
     // Transmission ID
+    UINT32 transmission_id;
 
     // Pointer to its offset in the transmission data
+    PBYTE data_to_send;
 
     // Size of the chunk that is being packetized
+    ULONG64 bytes_to_send;
 
-    // Bitmap for packet status (ACKed or not) -- but needs to be accessed by sender_listener somehow...
+    // Number of packets in transmission
+    ULONG64 n_packets_in_transmission;
 
-} WORKER_THREAD_INFO, *PWWORKER_THREAD_INFO;
+    // Which chunk this minion was assigned (used to determine packet range)
+    ULONG64 chunk_index;
+
+} SENDER_MINION_INFO, *PSENDER_MINION_INFO;
+
+/**
+ * This data structure keeps track of the transmissions in the order in which they are received.
+ * It facilitates the minions as they seek out the next chunk of work.
+ * Uses a circular buffer with separate read/write indices.
+ */
+typedef struct {
+    PUINT32 work_array;
+    // Had to seperate these two
+    volatile ULONG64 next_read_index;
+    volatile ULONG64 next_write_index;
+} TRANSMISSION_CACHE;
 
 typedef struct {
 
     // Queue of transmission IDs to indicate which
     // transmission should be worked on next
+    TRANSMISSION_CACHE transmissions_queue;
 
     // Sparse array (index = transmission ID) of transmission info structs
+    PSENDER_TRANSMISSION_INFO transmissions_in_progress;
 
 } SENDER_STATE, *PSENDER_STATE;
-
 
 
 /**
@@ -57,8 +108,9 @@ VOID create_sender(VOID);
  * @param transmission_data The offset into the transmission where
  * we begin packetizing.
  * @param bytes_to_packetize The number of bytes to packetize.
+ * @param minion_info Minion Info struct.
  */
-VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize);
+VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, SENDER_MINION_INFO minion_info);
 
 
 /**
@@ -97,11 +149,13 @@ DWORD sender_listener(LPVOID param);
  * @param param
  * @return
  */
-DWORD sender_worker(LPVOID param);
+DWORD sender_minion(LPVOID param);
 
 /**
  * @brief Called by the sender worker thread to determine its next job.
  * This will give the thread a chunk of a transmission to send & check,
  * or it will put it to sleep if no work is available.
  */
-VOID find_work(VOID);
+VOID find_work(PSENDER_MINION_INFO briefcase);
+
+UINT32 get_next_transmission_id(VOID);

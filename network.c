@@ -137,7 +137,7 @@ VOID net_init(PNET n) {
     n->packet_buffer = VirtualAlloc(
                                     NULL,
                                     NETWORK_BUFFER_CAPACITY_IN_BYTES,
-                                    MEM_RESERVE | MEM_COMMIT,
+                                    MEM_RESERVE,
                                     PAGE_READWRITE
                                     );
 
@@ -490,8 +490,16 @@ void copy_packet_data_into_slots(PPM pm, PPACKET pkt, PNET net) {
         // Decrement our running total by the amount we are about to copy.
         total_bytes_to_copy -= bytes_to_copy_for_this_slot;
 
-        // We copy our data into the slot
-        memcpy(dest, src, bytes_to_copy_for_this_slot);
+        // We copy our data into the slot. Since the address space is reserved but not committed,
+        // we may need to commit the memory now. And if that's the case, so be it!
+        __try {
+            memcpy(dest, src, bytes_to_copy_for_this_slot);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            LPVOID result = VirtualAlloc(dest, NETWORK_BUFFER_SLOT_SIZE_IN_BYTES, MEM_COMMIT, PAGE_READWRITE);
+            ASSERT(result);
+            memcpy(dest, src, bytes_to_copy_for_this_slot);
+        }
         num_copies--;
 
         // If we have finished our last copy, we break and return!
