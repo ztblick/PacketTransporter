@@ -15,14 +15,21 @@ VOID create_sender(VOID)
     g_sender_state.transmissions_in_progress =
         VirtualAlloc(NULL,
         MAXULONG32 * sizeof(SENDER_TRANSMISSION_INFO),
-        MEM_RESERVE | MEM_COMMIT,
+        MEM_RESERVE,
         PAGE_READWRITE);
+    if (g_sender_state.transmissions_in_progress == NULL) {
+        DebugBreak();
+    }
+
 
 
     g_sender_state.transmissions_queue.work_array = (PUINT32)VirtualAlloc(NULL,
         sizeof(UINT32) * WORK_ARRAY_SIZE,
         MEM_RESERVE | MEM_COMMIT,
         PAGE_READWRITE);
+    if (g_sender_state.transmissions_queue.work_array == NULL) {
+        DebugBreak();
+    }
 
     // Filling work array with default values
     memset(g_sender_state.transmissions_queue.work_array, EMPTY_WORK_ARRAY_ID, sizeof(UINT32) * WORK_ARRAY_SIZE);
@@ -41,8 +48,51 @@ VOID create_sender(VOID)
     }
 }
 
+
+
 VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, SENDER_MINION_INFO minion_info)
 {
+
+    ULONG64 numPackets;
+    DATA_PACKET packet;
+    ULONG64 bytes_left_to_packetize = bytes_to_packetize;
+    // right now we are just assuming that we want every packet to be as full as possible.
+    numPackets = bytes_to_packetize / MAX_PAYLOAD_SIZE;
+    if (bytes_to_packetize % MAX_PAYLOAD_SIZE != 0) {
+        numPackets++;
+    }
+
+
+    for (int i = 0; i < numPackets; i++) {
+        // I feel like there is an easier way of organizing the fields, but it would require a lot of blick work.
+        packet.index_in_transmission = i;
+        packet.transmission_id = minion_info.transmission_id;
+        packet.n_packets_in_transmission = minion_info.n_packets_in_transmission;
+        packet.must_be_zero = 0;
+        packet.bytes_in_header = 16;
+        packet.bytes_in_data_fields = 16;
+        packet.bytes_in_payload = min(bytes_left_to_packetize, MAX_PAYLOAD_SIZE);
+
+        __try {
+            memcpy(packet.data,(PVOID) ((ULONG64) transmission_data + i * MAX_PAYLOAD_SIZE), packet.bytes_in_payload);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            printf("Failed to copy data to packet, likely a hack attempt\n");
+            DebugBreak();
+            exit(1);
+        }
+
+        bytes_left_to_packetize -= packet.bytes_in_payload;
+
+        if (send_packet((PPACKET) &packet, ROLE_SENDER) == PACKET_REJECTED) {
+            printf("Failed to send packet\n");
+            DebugBreak();
+        }
+# if SUPERFLUOUS_PRINTS
+    printf("Sending packet with id %llu and index %llu\n", packet.transmission_id,packet.index_in_transmission);
+#endif
+    }
+
+#if 0
     ULONG64 bytes_left_to_packetize = bytes_to_packetize;
     for (int i = 0; i < bytes_to_packetize; i+= MAX_PAYLOAD_SIZE)
     {
@@ -88,6 +138,8 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
 
     }
 
+#endif
+
 }
 
 VOID send_packet_batch(ULONG64 number_of_packets_to_send)
@@ -132,6 +184,10 @@ DWORD sender_listener(LPVOID param)
             }
 
         }
+#if SUPERFLUOUS_PRINTS
+    printf("Received ack packet with id %llu and index %llu\n", transmission_id, packet.first_packet_index);
+#endif
+
     }
 
     /*

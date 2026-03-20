@@ -20,12 +20,12 @@
 // Cache_packet writes into it and main receiver thread pulls from it.
 #define BUFFER_SIZE_IN_PACKETS 128
 #define NUM_BITS_IN_CHUNK 64
-#define MAX_ATTEMPTS 16
+#define MAX_ATTEMPTS_RECIEVER 16
 
 typedef struct {
 
-    volatile ULONG64 initializationStarted;
-    volatile ULONG64 initializationComplete;
+    volatile LONG64 initializationStarted;
+    volatile LONG64 initializationComplete;
 
     volatile PULONG64 status_bitmap;
     PVOID transmission_data;
@@ -133,5 +133,6 @@ BYTE read_from_cache(PDATA_PACKET Noah_Packet);
 
 #define TRANSMISSION_RECEIVED       0
 #define NO_TRANSMISSION_AVAILABLE   1
+
 int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms);
 

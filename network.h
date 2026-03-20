@@ -97,7 +97,7 @@
 #define NO_BUFFER_SLOT_AVAILABLE          (NULL)
 #define NO_BUFFER_PACKET_AVAILABLE        (NULL)
 
-#define MAX_ATTEMPTS                      20
+#define MAX_ATTEMPTS_NETWORK                      20
 
 #define BITMAP_ROW_FULL_VALUE             MAXULONG64
 #define TIMES_TO_SCAN_BITMAP_BEFORE_EXIT  1

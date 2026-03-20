@@ -105,7 +105,7 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
     g_receiver_state.transmission_info_sparse_array[id].num_packets_left = num_packets;
     g_receiver_state.transmission_info_sparse_array[id].transmission_complete_event = CreateEvent(NULL, AUTO_RESET, FALSE, NULL);
 
-    _interlockedbittestandset64(&g_receiver_state.transmission_info_sparse_array[id].initializationComplete, 1);
+    _interlockedbittestandset64(&g_receiver_state.transmission_info_sparse_array[id].initializationComplete, 0);
 
 
 }
@@ -187,13 +187,6 @@ void document_received_transmission(PDATA_PACKET pkt) {
     }
 }
 
-DATA_PACKET remove_from_cache(void) {
-
-    ULONG64 index = (InterlockedIncrement64(&g_receiver_state.packet_cache.next_available_buffer_slot) - 1) % BUFFER_SIZE_IN_PACKETS;
-    return g_receiver_state.packet_cache.packet_space[index];
-
-}
-
 /**
  * @pre Assume the packet passed in has already been ACK'd in global data
  * @param pkt The packet to assemble a comm packet from
@@ -230,6 +223,8 @@ COMM_PACKET assemble_COMM_packet_from_packet(DATA_PACKET pkt) {
     commPacket.bytes_in_bitmap = numBytes;
     commPacket.first_packet_index = (bitmapStart * 8);
 
+
+
     // todo make beckett right a multiple of eight to my bits.
     memcpy(&commPacket.bitmap, &g_receiver_state.transmission_info_sparse_array[pkt.transmission_id].status_bitmap[bitmapStart], numBytes);
     return commPacket;
@@ -252,6 +247,7 @@ DWORD main_receiver_thread(LPVOID param) {
 
     WaitForSingleObject(simulation_begin, INFINITE);
 
+    DATA_PACKET packet;
 
     while (TRUE) {
       if (WaitForSingleObject(simulation_end, 0) == WAIT_OBJECT_0) {
@@ -260,12 +256,20 @@ DWORD main_receiver_thread(LPVOID param) {
 
         // wait for multiple object
        WaitForSingleObject(g_receiver_state.packet_cache.packets_waiting_in_cache, INFINITE);
-       DATA_PACKET packet = remove_from_cache();
+        if(read_from_cache(&packet) == PACKET_FAILED_TO_READ) {
+            continue;
+        }
         ASSERT(packet.must_be_zero == 0)
        document_received_transmission(&packet);
 
        COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
         send_packet((PPACKET) &commPacket, ROLE_RECEIVER);
+
+#if SUPERFLUOUS_PRINTS
+    printf("Received packet with transmission ID %d\n", commPacket.transmission_id);
+    printf("sent ack: ");
+#endif
+
 
     }
 
@@ -299,6 +303,7 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
 
     while (time_now_ms() < deadline) {
 
+        // check to see if it is complete, works regardless of whether it is initialized or not
         if (check_transmission(transmission_id)) {
 
             PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];

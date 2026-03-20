@@ -14,6 +14,7 @@
 RECEIVER_STATE g_receiver_state;
 
 void create_transport_layer(void) {
+    create_receiver();
     create_sender();
     return;
 }
@@ -30,6 +31,12 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
 
 
     PSENDER_TRANSMISSION_INFO current_transmission = &g_sender_state.transmissions_in_progress[transmission_id];
+
+
+    if (VirtualAlloc(current_transmission, sizeof(SENDER_TRANSMISSION_INFO), MEM_COMMIT, PAGE_READWRITE) == NULL) {
+        DebugBreak();
+    }
+
     current_transmission->data = data;
 
     ULONG64 num_packets = (length + MAX_PAYLOAD_SIZE - 1) / MAX_PAYLOAD_SIZE;
@@ -83,7 +90,7 @@ BYTE write_to_cache(PDATA_PACKET Niko_Packet) {
         // We did not find a slot so we move on to the next space on the cache
         else {
             // Once we reach max attempts, we drop the packet which is fine because sender side will send it again
-            if (attempts == MAX_ATTEMPTS) {
+            if (attempts == MAX_ATTEMPTS_RECIEVER) {
                 return PACKET_CACHE_FAIL;
             }
            InterlockedIncrement((PLONG)&g_receiver_state.packet_cache.slot_counter_writer);
