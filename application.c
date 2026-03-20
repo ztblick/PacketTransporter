@@ -112,6 +112,12 @@ void app_sender(void) {
         // You won! Congrats. Now it is your job to send THIS transmission
         transmission = &app.transmission_info[slot];
 
+        // Timestamp and mark as SENT before calling send_transmission,
+        // because send_transmission blocks until complete, and the
+        // receiver may mark it RECEIVED before send_transmission returns.
+        transmission->time_sent_ms = time_now_ms();
+        transmission->status = SENT;
+
         // Send it
         status = send_transmission(
             transmission->id,
@@ -122,17 +128,11 @@ void app_sender(void) {
         // If the transmission was not accepted,
         // unlock this slot and try again.
         if (status == TRANSMISSION_REJECTED) {
+            transmission->time_sent_ms = 0;
+            transmission->status = UNSENT;
             InterlockedBitTestAndReset64(&app.lock_sent[row], offset);
             continue;
         }
-
-        // Timestamp it
-        ASSERT(transmission->time_sent_ms == 0);
-        transmission->time_sent_ms = time_now_ms();
-
-        // Update its status to SENT
-        ASSERT(transmission->status == UNSENT);
-        transmission->status = SENT;
 
         // Bump up the sent count
         InterlockedIncrement16(&app.transmissions_sent);
@@ -199,7 +199,7 @@ void app_receiver(void) {
         // Try calling receive transmission
         status = receive_transmission(
             info->id,
-            &info->data_received,
+            info->data_received,
             &info->bytes_received,
             RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT
             );
@@ -211,7 +211,7 @@ void app_receiver(void) {
             continue;
         }
 
-        ASSERT(info->id > 0 && info->id < app.transmission_count);
+        ASSERT(info->id >= 0 && info->id < app.transmission_count);
         ASSERT(info->bytes_received > 0 && info->bytes_received <= MAX_TRANSMISSION_LIMIT_KB * KB(1));
 
         // If successful -- update info!
@@ -440,14 +440,14 @@ void initialize_layers_and_all_data(void) {
         NULL,                                   // Default security attributes
         TRUE,                                   // Manual reset event!
         FALSE,                                   // Initially the event is NOT set.
-        TEXT("BeginSimulationEvent")            // Event name
+        NULL                                    // Anonymous event (avoids stale kernel objects from crashes)
         );
 
     simulation_end = CreateEvent(
         NULL,
         TRUE,
         FALSE,
-        TEXT("EndSimulationEvent")
+        NULL
         );
 
     // Initialize all layers

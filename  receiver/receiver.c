@@ -58,7 +58,8 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
         printf("Failed to commit memory for transmission info sparse array\n");
         exit(1);
     }
-    memset((LPVOID) pageDataStartsOn, 0, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES);
+    // VirtualAlloc MEM_COMMIT gives zeroed pages on first commit.
+    // Do NOT memset here — subsequent calls would wipe initializationStarted/Complete flags.
 
     // if someone else has started the initialization wait for it to finish
     if (_interlockedbittestandset64(&(g_receiver_state.transmission_info_sparse_array[id].initializationStarted), 0) == 1) {
@@ -105,7 +106,7 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
     g_receiver_state.transmission_info_sparse_array[id].num_packets_left = num_packets;
     g_receiver_state.transmission_info_sparse_array[id].transmission_complete_event = CreateEvent(NULL, AUTO_RESET, FALSE, NULL);
 
-    _interlockedbittestandset64(&g_receiver_state.transmission_info_sparse_array[id].initializationComplete, 1);
+    _interlockedbittestandset64(&g_receiver_state.transmission_info_sparse_array[id].initializationComplete, 0);
 
 
 }
@@ -165,7 +166,7 @@ void document_received_transmission(PDATA_PACKET pkt) {
 
     ULONG64 addressToWrite = (ULONG64) transmission_info->transmission_data + packetNumber * 1024;
     ULONG64 pageDataStartsOn = addressToWrite & ~(PAGE_SIZE_IN_BYTES - 1);
-    ULONG64 pageDataEndsOn = (addressToWrite + PACKET_PAYLOAD_SIZE_IN_BYTES) & ~(PAGE_SIZE_IN_BYTES - 1);
+    ULONG64 pageDataEndsOn = (addressToWrite + PACKET_PAYLOAD_SIZE_IN_BYTES - 1) & ~(PAGE_SIZE_IN_BYTES - 1);
 
     if (VirtualAlloc( (LPVOID) pageDataStartsOn, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES, MEM_COMMIT, PAGE_READWRITE) == 0) {
         printf("Failed to commit memory for transmission data\n");
@@ -256,14 +257,19 @@ DWORD main_receiver_thread(LPVOID param) {
 
         // wait for multiple object
        WaitForSingleObject(g_receiver_state.packet_cache.packets_waiting_in_cache, INFINITE);
-       DATA_PACKET packet;
-       if (read_from_cache(&packet) != PACKET_SUCCESSFULLY_READ) {
-           continue;
-       }
-       document_received_transmission(&packet);
 
-       COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
-        send_packet((PPACKET) &commPacket, ROLE_RECEIVER);
+
+       // Drain all available packets from the cache.
+       DATA_PACKET packet;
+       while (read_from_cache(&packet) == PACKET_SUCCESSFULLY_READ) {
+           // Validate packet — cache may return stale data from reused slots
+           if (packet.must_be_zero != 0 || packet.transmission_id >= 1024) {
+               break;
+           }
+           document_received_transmission(&packet);
+           COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
+           send_packet((PPACKET) &commPacket, ROLE_RECEIVER);
+       }
 
     }
 
@@ -272,8 +278,10 @@ DWORD main_receiver_thread(LPVOID param) {
 boolean check_transmission(UINT32 transmission_id) {
 
     __try {
-        // check if it is initialized
-        if (g_receiver_state.transmission_info_sparse_array[transmission_id].num_packets_left == 0)
+        PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
+        // Must verify initialization is complete — VirtualAlloc zeros the page,
+        // so num_packets_left starts at 0 before init sets it to the real count.
+        if (info->initializationComplete && info->num_packets_left == 0)
             return TRUE;
 
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -294,8 +302,7 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
         return TRANSMISSION_RECEIVED;
     }
 
-    // Wait for main_receiver_thread to finish processing all packets for this transmission.
-    // We don't call receive_packet here — main_receiver_thread handles that.
+    // Poll for DATA packets from the network, write them to cache for main_receiver_thread.
     ULONG64 deadline = time_now_ms() + timeout_ms;
 
     while (time_now_ms() < deadline) {
@@ -307,20 +314,11 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
             return TRANSMISSION_RECEIVED;
         }
 
-        // Try to wait on the event if the transmission has been initialized.
-        // The sparse array uses MEM_RESERVE so pages may not be committed yet.
-        __try {
-            PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
-            if (info->transmission_complete_event != NULL) {
-                ULONG64 remaining = deadline - time_now_ms();
-                WaitForSingleObject(info->transmission_complete_event, (DWORD)min(remaining, 100));
-            } else {
-                Sleep(10);
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            // Memory not committed yet — transmission hasn't been initialized
-            Sleep(10);
-        }
+        // Receive DATA packets from the network and write them to cache
+        DATA_PACKET local_pkt;
+        int receive_status = receive_packet((PPACKET)&local_pkt, 10, ROLE_RECEIVER);
+        if (receive_status == NO_PACKET_AVAILABLE) continue;
+        write_to_cache(&local_pkt);
     }
 
     return NO_TRANSMISSION_AVAILABLE;

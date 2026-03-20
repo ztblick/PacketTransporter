@@ -97,7 +97,7 @@ BYTE write_to_cache(PDATA_PACKET Niko_Packet) {
     memcpy(&g_receiver_state.packet_cache.packet_space[chunk * NUM_BITS_IN_CHUNK + offset],
         Niko_Packet, PACKET_PAYLOAD_SIZE_IN_BYTES);
     // Update bitmap for reader side to indicate a packet can be read from this slot we reserved
-    g_receiver_state.packet_cache.is_cache_slot_written[chunk * NUM_BITS_IN_CHUNK + offset] = 1;
+    _interlockedbittestandset64((PLONGLONG)&g_receiver_state.packet_cache.is_cache_slot_written[chunk], offset);
     SetEvent(g_receiver_state.packet_cache.packets_waiting_in_cache);
     return PACKET_CACHE_SUCCESSFUL;
 
@@ -145,6 +145,6 @@ BYTE read_from_cache(PDATA_PACKET Noah_Packet) {
         &g_receiver_state.packet_cache.packet_space[chunk * NUM_BITS_IN_CHUNK + offset]
         ,PACKET_PAYLOAD_SIZE_IN_BYTES);
     // Update bitmap for writer side to indicate this cache slot is available to be written into again
-    g_receiver_state.packet_cache.reserve_cache_slot[chunk * NUM_BITS_IN_CHUNK + offset] = 0;
+    _interlockedbittestandreset64((PLONGLONG)&g_receiver_state.packet_cache.reserve_cache_slot[chunk], offset);
     return PACKET_SUCCESSFULLY_READ;
 }

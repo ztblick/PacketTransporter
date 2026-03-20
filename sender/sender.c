@@ -98,6 +98,9 @@ VOID send_packet_batch(ULONG64 number_of_packets_to_send)
 
 DWORD sender_listener(LPVOID param)
 {
+    // Wait for all layers to be initialized before polling the network
+    WaitForSingleObject(simulation_begin, INFINITE);
+
     ULONG64 timeout_ms = 100;
 
     COMM_PACKET packet; // Will need to change this to an array of packet locations and receive them there ?
@@ -112,16 +115,25 @@ DWORD sender_listener(LPVOID param)
 
         UINT32 transmission_id = packet.transmission_id;
 
+        // Validate transmission ID — garbage ACKs from stale cache data could crash
+        if (transmission_id >= 1024) {
+            continue;
+        }
+
         // Immediately write out the comms we received to our transmission bitmaps for the minions.
         PSENDER_TRANSMISSION_INFO transmission_info = &g_sender_state.transmissions_in_progress[transmission_id];
 
 
-        for (int i = 0; i < packet.n_bits_to_read; i++)
+        // Cap at the actual number of packets to avoid writing past our bitmap allocation
+        ULONG64 max_bits = min(packet.n_bits_to_read,
+            transmission_info->number_of_packets_in_transmission - packet.first_packet_index);
+
+        for (int i = 0; i < max_bits; i++)
         {
             BYTE current_byte = packet.bitmap[i / 8];
 
             // Had to look up this bitwise operator stuff but I think it's right.
-            int is_bit_set = current_byte & 1 << (i % 8);
+            int is_bit_set = current_byte & (1 << (i % 8));
 
             // Weird thing where I have to divide by 64 instead of 8 because the packet status bitmap is 64 bits
             // as opposed to the packet bitmap's 8 bit data type.
@@ -131,6 +143,21 @@ DWORD sender_listener(LPVOID param)
                 transmission_info->packet_status_bitmap[packet_index / 64] |= 1ULL << (packet_index % 64);
             }
 
+        }
+
+        // Check if the entire transmission is now complete after updating the bitmap
+        boolean all_done = TRUE;
+        for (ULONG64 i = 0; i < transmission_info->number_of_packets_in_transmission; i++)
+        {
+            if (!(transmission_info->packet_status_bitmap[i / 64] & (1ULL << (i % 64))))
+            {
+                all_done = FALSE;
+                break;
+            }
+        }
+        if (all_done && transmission_info->sending_complete_event != NULL)
+        {
+            SetEvent(transmission_info->sending_complete_event);
         }
     }
 
@@ -154,6 +181,7 @@ DWORD sender_minion(LPVOID param)
     {
         // Find our next work and update the briefcase with its info.
         find_work(p_briefcase);
+
 
         // Check that we were able to find any work (if not, wait and retry).
         if (p_briefcase->transmission_id == EMPTY_WORK_ARRAY_ID) {
@@ -274,10 +302,6 @@ UINT32 get_next_transmission_id(VOID) {
 
     UINT32 return_ID = g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.
         next_read_index % WORK_ARRAY_SIZE];
-
-    // Clear the ID I returned so it can be reused
-    g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.
-        next_read_index % WORK_ARRAY_SIZE] = EMPTY_WORK_ARRAY_ID;
 
     return return_ID;
 }
