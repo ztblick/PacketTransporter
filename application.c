@@ -131,7 +131,8 @@ void app_sender(void) {
         transmission->time_sent_ms = time_now_ms();
 
         // Update its status to SENT
-        ASSERT(transmission->status == UNSENT);
+        //TODO blickster if you called send there is a possibility that the transmission was recieved so this assert could unneseccarily fire
+        //ASSERT(transmission->status == UNSENT);
         transmission->status = SENT;
 
         // Bump up the sent count
@@ -197,9 +198,10 @@ void app_receiver(void) {
         }
 
         // Try calling receive transmission
+        //TODO blickster you passed in the address
         status = receive_transmission(
             info->id,
-            &info->data_received,
+            info->data_received,
             &info->bytes_received,
             RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT
             );
@@ -211,13 +213,14 @@ void app_receiver(void) {
             continue;
         }
 
-        ASSERT(info->id > 0 && info->id < app.transmission_count);
+        ASSERT(info->id < app.transmission_count);
         ASSERT(info->bytes_received > 0 && info->bytes_received <= MAX_TRANSMISSION_LIMIT_KB * KB(1));
 
         // If successful -- update info!
         info->time_received_ms = time_now_ms();
         info->status = RECEIVED;
-
+        printf("received transmission %d\n", info->id);
+        ASSERT(0)
         // Increment received count for all transmissions
         InterlockedIncrement16(&app.transmissions_received);
 

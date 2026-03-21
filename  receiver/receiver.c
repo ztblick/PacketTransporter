@@ -165,9 +165,9 @@ void document_received_transmission(PDATA_PACKET pkt) {
 
     ULONG64 addressToWrite = (ULONG64) transmission_info->transmission_data + packetNumber * 1024;
 
-#if 0
+#if 1
     ULONG64 pageDataStartsOn = addressToWrite & ~(PAGE_SIZE_IN_BYTES - 1);
-    ULONG64 pageDataEndsOn = (addressToWrite + PACKET_PAYLOAD_SIZE_IN_BYTES) & ~(PAGE_SIZE_IN_BYTES - 1);
+    ULONG64 pageDataEndsOn = (addressToWrite + PACKET_PAYLOAD_SIZE_IN_BYTES - 1) & ~(PAGE_SIZE_IN_BYTES - 1);
 
     if (VirtualAlloc( (LPVOID) pageDataStartsOn, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES, MEM_COMMIT, PAGE_READWRITE) == 0) {
         printf("Failed to commit memory for transmission data\n");
@@ -264,32 +264,33 @@ DWORD main_receiver_thread(LPVOID param) {
 
         // wait for multiple object
        WaitForSingleObject(g_receiver_state.packet_cache.packets_waiting_in_cache, INFINITE);
-    while (TRUE) {
-        ULONG64 return_value = read_from_cache(&packet);
-        if( return_value == PACKET_FAILED_TO_READ) {
-            break;
-        }
-    #if SUPERFLUOUS_PRINTS
-        printf("uncached packet transmission ID %d and index %d\n", packet.transmission_id, packet.index_in_transmission);
 
-    #endif
+        while (TRUE) {
+            ULONG64 return_value = read_from_cache(&packet);
+            if( return_value == PACKET_FAILED_TO_READ) {
+                break;
+            }
+        #if SUPERFLUOUS_PRINTS
+            printf("uncached packet transmission ID %d and index %d\n", packet.transmission_id, packet.index_in_transmission);
 
-        ASSERT(packet.must_be_zero == 0)
-        // this is kind of code that represents that this packet is just zeroed
-        ASSERT(packet.n_packets_in_transmission != 0)
-       document_received_transmission(&packet);
+        #endif
+
+            ASSERT(packet.must_be_zero == 0)
+            // this is kind of code that represents that this packet is just zeroed
+            ASSERT(packet.n_packets_in_transmission != 0)
+           document_received_transmission(&packet);
 
 
-        COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
-        //DebugBreak();
+            COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
+            //DebugBreak();
 
-        send_packet((PPACKET) &commPacket, ROLE_RECEIVER);
+            send_packet((PPACKET) &commPacket, ROLE_RECEIVER);
 
-    #if SUPERFLUOUS_PRINTS
+        #if SUPERFLUOUS_PRINTS
 
-        printf("sent ack with id %llu and index %llu \n", commPacket.transmission_id, commPacket.first_packet_index);
-    #endif
-        }
+            printf("sent ack with id %llu and index %llu \n", commPacket.transmission_id, commPacket.first_packet_index);
+        #endif
+            }
 
     }
 
@@ -337,6 +338,7 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
 
             // Finish the transmission and return
             return TRANSMISSION_RECEIVED;
+
         }
 
         //Calls receive packet at the dest and saves the result to check if transmission was successful
@@ -359,6 +361,7 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
     }
 #endif
 
+    printf("Timed out waiting for transmission %d\n", transmission_id);
     //If we get to this point, we know runtime exceeded the deadline threshold
     return NO_TRANSMISSION_AVAILABLE;
 }
