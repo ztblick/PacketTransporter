@@ -433,9 +433,14 @@ void release_extra_slots(PPM pm, UINT32 slots_needed, PNET net) {
 ULONG64 try_get_packet_from_buffer(PNET pnet, PPM* pm_of_caller) {
 
     ULONG64 closest_eta = MAXULONG64;
+    PPM pm = pnet->metadata_slots;
+
+    ASSERT(pm != NULL);
+
+
 
     for (
-        PPM pm = pnet->metadata_slots;
+        ;
         pm < pnet->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS;
         pm++) {
 

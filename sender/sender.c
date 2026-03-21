@@ -62,10 +62,11 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
         numPackets++;
     }
 
+    UINT32 starting_packet_numer = minion_info.chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
 
     for (int i = 0; i < numPackets; i++) {
         // I feel like there is an easier way of organizing the fields, but it would require a lot of blick work.
-        packet.index_in_transmission = i;
+        packet.index_in_transmission = starting_packet_numer + i;
         packet.transmission_id = minion_info.transmission_id;
         packet.n_packets_in_transmission = minion_info.n_packets_in_transmission;
         packet.must_be_zero = 0;
@@ -185,7 +186,7 @@ DWORD sender_listener(LPVOID param)
 
         }
 #if SUPERFLUOUS_PRINTS
-    printf("Received ack packet with id %llu and index %llu\n", transmission_id, packet.first_packet_index);
+    printf("Received ack packet with id %llu and index %llu\n, here is the first bitmap %llu \n", transmission_id, packet.first_packet_index, packet.bitmap[0]);
 #endif
 
     }
@@ -334,6 +335,26 @@ UINT32 get_next_transmission_id(VOID) {
     // Clear the ID I returned so it can be reused
     g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.
         next_read_index % WORK_ARRAY_SIZE] = EMPTY_WORK_ARRAY_ID;
+
+
+
+    // // TODO
+    // PSENDER_TRANSMISSION_INFO info = &g_sender_state.transmissions_in_progress[return_ID];
+    //
+    // // Interlocked increment our chunk index so it is safe across the multiple threads.
+    // ULONG64 chunk_index = InterlockedIncrement64((volatile LONG64*) &info->next_chunk_index) - 1;
+    //
+    // // Check if this chunk is past the end of the transmission
+    // // if we are at the last packet, we don't need to add it back to the array, I am using the previous logic, there is probably a better way to do this.'
+    // ULONG64 first_packet_of_chunk = chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
+    // if (first_packet_of_chunk >= info->number_of_packets_in_transmission) {
+    //
+    // } else {
+        g_sender_state.transmissions_queue.work_array[g_sender_state.transmissions_queue.next_write_index % WORK_ARRAY_SIZE] = return_ID;
+        g_sender_state.transmissions_queue.next_write_index++;
+
+    //}
+    // there is a slowdown where we are not checking if it is the last packet in the transmission
 
     return return_ID;
 }

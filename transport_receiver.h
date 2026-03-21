@@ -45,11 +45,11 @@ typedef struct {
     volatile UINT32 slot_counter_reader;
     // TODO: Initialize these bitmaps
     // Bitmap which indicate that a thread has taken a slot on the cache and is about to write into it
-    ULONG64 reserve_cache_slot[2];
+    volatile ULONG64 reserve_cache_slot[2];
     // Bitmap which indicates which cache slots have been finished writing into
     // We need this bitmap in order to handle a case where we reserve a cache slot, but we haven't
     // finished writing into it. A case where we could try to read before we write into the cache slot
-    ULONG64 is_cache_slot_written[2];
+    volatile ULONG64 is_cache_slot_written[2];
     // This event is used to wake the main receiver thread
     // when packets are added to the cache.
     HANDLE packets_waiting_in_cache;

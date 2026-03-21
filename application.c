@@ -449,14 +449,14 @@ void initialize_layers_and_all_data(void) {
         FALSE,
         TEXT("EndSimulationEvent")
         );
+    // Initialize timing
+    time_init();
 
     // Initialize all layers
     create_application_layer();
     create_transport_layer();
     create_network_layer();
 
-    // Initialize timing
-    time_init();
 
 }
 

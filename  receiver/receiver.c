@@ -18,7 +18,7 @@ void initialize_cache(void){
     g_receiver_state.packet_cache.slot_counter_writer = 0;
 
     // Initialize the buffer that we will write into
-    memset(g_receiver_state.packet_cache.packet_space, 0, BUFFER_SIZE_IN_PACKETS);
+    memset(g_receiver_state.packet_cache.packet_space, 0, sizeof(DATA_PACKET)*BUFFER_SIZE_IN_PACKETS);
 
     // Initialize Bitmaps
     memset(g_receiver_state.packet_cache.reserve_cache_slot, 0,
@@ -156,13 +156,16 @@ void document_received_transmission(PDATA_PACKET pkt) {
     ULONG64 bitmapIndex = packetNumber / 64;
     LONG64 bitIndex = packetNumber % 64;
 
+    // if the bit is already set, we don't need to do anything because the packet has already been sent over the wire
     ULONG64 output;
     output = _interlockedbittestandset64(&transmission_info->status_bitmap[bitmapIndex], bitIndex);
-    if(output == 0) {
+    if(output == 1) {
         return;
     }
 
     ULONG64 addressToWrite = (ULONG64) transmission_info->transmission_data + packetNumber * 1024;
+
+#if 0
     ULONG64 pageDataStartsOn = addressToWrite & ~(PAGE_SIZE_IN_BYTES - 1);
     ULONG64 pageDataEndsOn = (addressToWrite + PACKET_PAYLOAD_SIZE_IN_BYTES) & ~(PAGE_SIZE_IN_BYTES - 1);
 
@@ -170,6 +173,10 @@ void document_received_transmission(PDATA_PACKET pkt) {
         printf("Failed to commit memory for transmission data\n");
         exit(1);
     }
+#endif
+
+
+
 
 
 
@@ -249,6 +256,7 @@ DWORD main_receiver_thread(LPVOID param) {
 
     DATA_PACKET packet;
 
+    memset(&packet, 0, sizeof(DATA_PACKET));
     while (TRUE) {
       if (WaitForSingleObject(simulation_end, 0) == WAIT_OBJECT_0) {
           return 0;
@@ -256,20 +264,32 @@ DWORD main_receiver_thread(LPVOID param) {
 
         // wait for multiple object
        WaitForSingleObject(g_receiver_state.packet_cache.packets_waiting_in_cache, INFINITE);
-        if(read_from_cache(&packet) == PACKET_FAILED_TO_READ) {
-            continue;
+    while (TRUE) {
+        ULONG64 return_value = read_from_cache(&packet);
+        if( return_value == PACKET_FAILED_TO_READ) {
+            break;
         }
+    #if SUPERFLUOUS_PRINTS
+        printf("uncached packet transmission ID %d and index %d\n", packet.transmission_id, packet.index_in_transmission);
+
+    #endif
+
         ASSERT(packet.must_be_zero == 0)
+        // this is kind of code that represents that this packet is just zeroed
+        ASSERT(packet.n_packets_in_transmission != 0)
        document_received_transmission(&packet);
 
-       COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
+
+        COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
+        //DebugBreak();
+
         send_packet((PPACKET) &commPacket, ROLE_RECEIVER);
 
-#if SUPERFLUOUS_PRINTS
-    printf("Received packet with transmission ID %d\n", commPacket.transmission_id);
-    printf("sent ack: ");
-#endif
+    #if SUPERFLUOUS_PRINTS
 
+        printf("sent ack with id %llu and index %llu \n", commPacket.transmission_id, commPacket.first_packet_index);
+    #endif
+        }
 
     }
 
@@ -301,7 +321,7 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
     ULONG64 time = time_now_ms();
     ULONG64 deadline = time + timeout_ms;
 
-    while (time_now_ms() < deadline) {
+    while (TRUE) {
 
         // check to see if it is complete, works regardless of whether it is initialized or not
         if (check_transmission(transmission_id)) {
@@ -327,8 +347,17 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
         if (result == NO_PACKET_AVAILABLE) {
             continue;
         }
+#if SUPERFLUOUS_PRINTS
+        printf("Cached packet with transmission ID %d and index %d\n", local_pkt.transmission_id, local_pkt.index_in_transmission);
+#endif
+
         write_to_cache(&local_pkt);
     }
+#if DEBUG
+    if (time_now_ms() > deadline) {
+        printf("Timed out waiting for transmission %d\n", transmission_id);
+    }
+#endif
 
     //If we get to this point, we know runtime exceeded the deadline threshold
     return NO_TRANSMISSION_AVAILABLE;
