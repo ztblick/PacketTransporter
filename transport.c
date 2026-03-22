@@ -73,7 +73,7 @@ BYTE write_to_cache(PDATA_PACKET Niko_Packet) {
     int return_value = 0;
     int chunk = 0;
     int offset = 0;
-    int slot = 0;
+//    int slot = 0;
     int original_value_counter = 0;
     // Continue looking for a slot in the cache to write in
     while (found_slot == FALSE) {
@@ -103,10 +103,10 @@ BYTE write_to_cache(PDATA_PACKET Niko_Packet) {
     }
     // Write packet into the circular buffer
     memcpy(&g_receiver_state.packet_cache.packet_space[chunk * NUM_BITS_IN_CHUNK + offset],
-        Niko_Packet, PACKET_PAYLOAD_SIZE_IN_BYTES);
+        Niko_Packet, sizeof(DATA_PACKET));
     // Update bitmap for reader side to indicate a packet can be read from this slot we reserved
     //g_receiver_state.packet_cache.is_cache_slot_written[chunk * NUM_BITS_IN_CHUNK + offset] = 1;
-    InterlockedBitTestAndSet64(&(g_receiver_state.packet_cache.is_cache_slot_written[chunk]), offset);
+    InterlockedBitTestAndSet64((volatile PLONG64)&(g_receiver_state.packet_cache.is_cache_slot_written[chunk]), offset);
     SetEvent(g_receiver_state.packet_cache.packets_waiting_in_cache);
     return PACKET_CACHE_SUCCESSFUL;
 

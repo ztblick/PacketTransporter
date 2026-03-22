@@ -127,3 +127,12 @@ void run_test(void);
  * Prints test statistics to stdout.
  */
 void print_stats(void);
+
+/*
+ * noah_stats
+ *
+ * Validates each transmission by diffing sent vs received bytes.
+ * Prints per-transmission index and pass/fail, then overall success rate.
+ * Does not report timing.
+ */
+void noah_stats(void);
