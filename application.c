@@ -220,7 +220,7 @@ void app_receiver(void) {
         info->time_received_ms = time_now_ms();
         info->status = RECEIVED;
         printf("received transmission %d\n", info->id);
-        ASSERT(0)
+        //ASSERT(0)
         // Increment received count for all transmissions
         InterlockedIncrement16(&app.transmissions_received);
 
@@ -457,8 +457,9 @@ void initialize_layers_and_all_data(void) {
 
     // Initialize all layers
     create_application_layer();
-    create_transport_layer();
     create_network_layer();
+    create_transport_layer();
+
 
 
 }

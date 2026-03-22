@@ -98,4 +98,4 @@ typedef struct comm_packet {
 } COMM_PACKET, *PCOMM_PACKET;
 
 
-#define SUPERFLUOUS_PRINTS 0
+#define SUPERFLUOUS_PRINTS 1
