@@ -133,7 +133,7 @@ void app_sender(void) {
         // Update its status to SENT
         //TODO blickster if you called send there is a possibility that the transmission was recieved so this assert could unneseccarily fire
         //ASSERT(transmission->status == UNSENT);
-        transmission->status = SENT;
+       // transmission->status = SENT;
 
         // Bump up the sent count
         InterlockedIncrement16(&app.transmissions_sent);
@@ -205,7 +205,8 @@ void app_receiver(void) {
             &info->bytes_received,
             RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT
             );
-        ASSERT(0)
+        printf("receive_transmission status %d\n", status);
+
 
         // If unsuccessful, release the lock on this transmission and try again
         if (status == NO_TRANSMISSION_AVAILABLE) {
@@ -220,8 +221,9 @@ void app_receiver(void) {
         // If successful -- update info!
         info->time_received_ms = time_now_ms();
         info->status = RECEIVED;
+
         printf("received transmission %d\n", info->id);
-        //ASSERT(0)
+        printf("transmission status %d\n", info->status);
         // Increment received count for all transmissions
         InterlockedIncrement16(&app.transmissions_received);
 
@@ -649,7 +651,7 @@ int main(int argc, char** argv) {
 
     // Now we will begin the test!
     run_test();
-
+//ASSERT(0)
     printf("Done!\n");
     printf("==================================================\n");
 

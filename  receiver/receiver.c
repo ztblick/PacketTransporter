@@ -299,8 +299,11 @@ DWORD main_receiver_thread(LPVOID param) {
 boolean check_transmission(UINT32 transmission_id) {
 
     __try {
-        // check if it is initialized
-        if (g_receiver_state.transmission_info_sparse_array[transmission_id].num_packets_left == 0)
+        PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
+        // Must verify initialization is complete before trusting num_packets_left.
+        // Without this, a race between memset (zeroing num_packets_left) and the
+        // assignment of the real packet count causes a false TRUE.
+        if (info->initializationComplete == 1 && info->num_packets_left == 0)
             return TRUE;
 
     } __except (EXCEPTION_EXECUTE_HANDLER) {
