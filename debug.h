@@ -5,7 +5,7 @@
 #pragma once
 
 // Global debug mode switch
-#define DEBUG   1
+#define DEBUG   0
 
 /*
  *  Debugging tools
@@ -16,7 +16,7 @@
 #define ASSERT(x)
 #endif
 
-#if DEBUG
+#if 1
 #define UNSENT      0
 #define SENT        1
 #define RECEIVED    2
