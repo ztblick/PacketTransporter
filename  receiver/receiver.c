@@ -58,7 +58,7 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
         printf("Failed to commit memory for transmission info sparse array\n");
         exit(1);
     }
-    memset((LPVOID) pageDataStartsOn, 0, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES);
+    //memset((LPVOID) pageDataStartsOn, 0, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES);
 
     // if someone else has started the initialization wait for it to finish
     if (_interlockedbittestandset64(&(g_receiver_state.transmission_info_sparse_array[id].initializationStarted), 0) == 1) {
@@ -326,6 +326,7 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
     ULONG64 deadline = time + timeout_ms;
 
     while (TRUE) {
+
 
         // check to see if it is complete, works regardless of whether it is initialized or not
         if (check_transmission(transmission_id)) {

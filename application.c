@@ -205,7 +205,7 @@ void app_receiver(void) {
             &info->bytes_received,
             RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT
             );
-        printf("receive_transmission status %d\n", status);
+
 
 
         // If unsuccessful, release the lock on this transmission and try again
@@ -222,8 +222,7 @@ void app_receiver(void) {
         info->time_received_ms = time_now_ms();
         info->status = RECEIVED;
 
-        printf("received transmission %d\n", info->id);
-        printf("transmission status %d\n", info->status);
+
         // Increment received count for all transmissions
         InterlockedIncrement16(&app.transmissions_received);
 

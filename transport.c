@@ -62,9 +62,14 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
 }
 
 int receive_transmission(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
-    return reciever_handler(transmission_id, dest, out_length, timeout_ms);
+    int returnVal = reciever_handler(transmission_id, dest, out_length, timeout_ms);
+
+    printf("Received transmission %d length %llu\n", transmission_id, *out_length);
+
+    return returnVal;
 }
 BYTE write_to_cache(PDATA_PACKET Niko_Packet) {
+    printf(".");
     // Make sure packet exists/if Niko does a bad job
     ASSERT(Niko_Packet);
     // Attempt to reserve slot in cache to write into

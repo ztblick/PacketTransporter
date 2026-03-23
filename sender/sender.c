@@ -55,7 +55,7 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
 
     ULONG64 numPackets;
     DATA_PACKET packet;
-    ULONG64 bytes_left_to_packetize = bytes_to_packetize;
+    UINT32 bytes_left_to_packetize = bytes_to_packetize;
     // right now we are just assuming that we want every packet to be as full as possible.
     numPackets = bytes_to_packetize / MAX_PAYLOAD_SIZE;
     if (bytes_to_packetize % MAX_PAYLOAD_SIZE != 0) {
