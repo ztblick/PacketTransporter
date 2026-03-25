@@ -96,3 +96,6 @@ typedef struct comm_packet {
     BYTE bitmap[MAX_PAYLOAD_SIZE];          // Contains bitmap, where each 0 indicates a packet that WAS NOT
                                             // received and a 1 indicates a packet that WAS received.
 } COMM_PACKET, *PCOMM_PACKET;
+
+
+#define SUPERFLUOUS_PRINTS 0

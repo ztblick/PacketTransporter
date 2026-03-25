@@ -133,7 +133,7 @@ static int test_single_threaded(void) {
     /* Send all packets */
     printf("Sending packets...\n");
     for (int i = 0; i < NUM_PACKETS_SINGLE_THREADED; i++) {
-        uint32_t length = (i + 1) % MAX_PAYLOAD_SIZE;
+       // uint32_t length = (i + 1) % MAX_PAYLOAD_SIZE;
         fill_packet_with_pattern(&send_pkt, (uint32_t)(i + 1), PACKET_TEST_SIZE_IN_BYTES);
 
         int result = send_packet((PPACKET) &send_pkt, ROLE_SENDER);
@@ -215,7 +215,7 @@ static DWORD WINAPI sender_thread_func(LPVOID param) {
     for (int i = 0; i < PACKETS_PER_SENDER; i++) {
 
         uint32_t packet_id = (uint32_t)(start_id + i + 1);
-        uint32_t length = (i + 1) % MAX_PAYLOAD_SIZE;
+//        uint32_t length = (i + 1) % MAX_PAYLOAD_SIZE;
 
         fill_packet_with_pattern(&pkt, packet_id, PACKET_TEST_SIZE_IN_BYTES);
 

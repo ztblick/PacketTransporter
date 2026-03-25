@@ -15,7 +15,7 @@
 #define ARG_COUNT   5
 #define ARG_ERROR   -1
 
-#define DEFAULT_THREAD_COUNT            1
+#define DEFAULT_THREAD_COUNT            4
 #define MIN_THREAD_COUNT                1
 #define MAX_THREAD_COUNT                64
 
@@ -23,7 +23,7 @@
 #define MIN_TRANSMISSION_LIMIT_KB       1
 #define MAX_TRANSMISSION_LIMIT_KB       (1024 * 1024)
 
-#define DEFAULT_TRANSMISSION_COUNT      1
+#define DEFAULT_TRANSMISSION_COUNT      16
 #define MIN_TRANSMISSION_COUNT          1
 #define MAX_TRANSMISSION_COUNT          64
 #define TRANSMISSION_LOCK_ROWS          ((MAX_TRANSMISSION_COUNT + 63) / 64)
@@ -127,3 +127,12 @@ void run_test(void);
  * Prints test statistics to stdout.
  */
 void print_stats(void);
+
+/*
+ * noah_stats
+ *
+ * Validates each transmission by diffing sent vs received bytes.
+ * Prints per-transmission index and pass/fail, then overall success rate.
+ * Does not report timing.
+ */
+void noah_stats(void);

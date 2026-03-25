@@ -85,6 +85,8 @@ typedef struct {
 
 } SENDER_STATE, *PSENDER_STATE;
 
+extern SENDER_STATE g_sender_state;
+
 
 /**
  * Key design choice:

@@ -264,7 +264,7 @@ void add_slot(PPM pm, ULONG64 slot) {
         slot_count = current->number_of_slots_reserved_at_node;
     }
 
-    current->slot_numbers[slot_count] = slot;
+    current->slot_numbers[slot_count] = (UINT32)slot;
     current->number_of_slots_reserved_at_node++;
     pm->number_of_slots_reserved++;
     ASSERT(pm->number_of_slots_reserved <= MAX_PAYLOAD_SIZE / NETWORK_BUFFER_SLOT_SIZE_IN_BYTES + 1);
@@ -433,9 +433,14 @@ void release_extra_slots(PPM pm, UINT32 slots_needed, PNET net) {
 ULONG64 try_get_packet_from_buffer(PNET pnet, PPM* pm_of_caller) {
 
     ULONG64 closest_eta = MAXULONG64;
+  //  ASSERT(pnet->metadata_slots != NULL);
+    PPM pm =pnet->metadata_slots;
+   // ASSERT(pm != NULL);
+
+
 
     for (
-        PPM pm = pnet->metadata_slots;
+        ;
         pm < pnet->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS;
         pm++) {
 
@@ -484,7 +489,7 @@ void copy_packet_data_into_slots(PPM pm, PPACKET pkt, PNET net) {
         // copy what we need.
         bytes_to_copy_for_this_slot = NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
         if (total_bytes_to_copy < NETWORK_BUFFER_SLOT_SIZE_IN_BYTES) {
-            bytes_to_copy_for_this_slot = total_bytes_to_copy;
+            bytes_to_copy_for_this_slot = (UINT32) total_bytes_to_copy;
         }
 
         // Decrement our running total by the amount we are about to copy.
@@ -550,7 +555,7 @@ void copy_from_slots_to_packet(PPM pm, PPACKET pkt, PNET net) {
         // Calculate the size of the copy
         bytes_to_copy_for_this_slot = NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
         if (bytes_left_to_copy < NETWORK_BUFFER_SLOT_SIZE_IN_BYTES) {
-            bytes_to_copy_for_this_slot = bytes_left_to_copy;
+            bytes_to_copy_for_this_slot = (UINT32) bytes_left_to_copy;
         }
 
         // Decrement our running total by the amount we are about to copy.
@@ -631,7 +636,7 @@ int send_packet(PPACKET pkt, int role) {
     if (role == ROLE_RECEIVER) n = &network_state.RS_net;
 
     // Determine the number of slots needed for this packet
-    slots_needed = (total_packet_size_in_bytes + NETWORK_BUFFER_SLOT_SIZE_IN_BYTES - 1)
+    slots_needed = (UINT32) (total_packet_size_in_bytes + NETWORK_BUFFER_SLOT_SIZE_IN_BYTES - 1)
                     / NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
     ASSERT(slots_needed >= 1);
 
@@ -757,7 +762,7 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
         wait_time = min(NET_RETRY_MS, max(0, closest_eta - time_now_ms()));
 
         // And now we wait
-        WaitForSingleObject(n->packets_present, wait_time);
+        WaitForSingleObject(n->packets_present, (DWORD) wait_time);
 
         // After waking up, we check for a timeout
         if (time_now_ms() > deadline) return NO_PACKET_AVAILABLE;

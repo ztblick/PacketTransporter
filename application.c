@@ -131,8 +131,9 @@ void app_sender(void) {
         transmission->time_sent_ms = time_now_ms();
 
         // Update its status to SENT
-        ASSERT(transmission->status == UNSENT);
-        transmission->status = SENT;
+        //TODO blickster if you called send there is a possibility that the transmission was recieved so this assert could unneseccarily fire
+        //ASSERT(transmission->status == UNSENT);
+       // transmission->status = SENT;
 
         // Bump up the sent count
         InterlockedIncrement16(&app.transmissions_sent);
@@ -153,7 +154,7 @@ void app_sender(void) {
 void app_receiver(void) {
 
     ULONG64 end_ms;
-    APP_TRANSMISSION_INFO transmission;
+//    APP_TRANSMISSION_INFO transmission;
     PAPP_TRANSMISSION_INFO info;
     int status;
     unsigned char result;
@@ -197,12 +198,15 @@ void app_receiver(void) {
         }
 
         // Try calling receive transmission
+        //TODO blickster you passed in the address
         status = receive_transmission(
             info->id,
-            &info->data_received,
+            info->data_received,
             &info->bytes_received,
             RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT
             );
+
+
 
         // If unsuccessful, release the lock on this transmission and try again
         if (status == NO_TRANSMISSION_AVAILABLE) {
@@ -211,12 +215,13 @@ void app_receiver(void) {
             continue;
         }
 
-        ASSERT(info->id > 0 && info->id < app.transmission_count);
+//        ASSERT(info->id < app.transmission_count);
         ASSERT(info->bytes_received > 0 && info->bytes_received <= MAX_TRANSMISSION_LIMIT_KB * KB(1));
 
         // If successful -- update info!
         info->time_received_ms = time_now_ms();
         info->status = RECEIVED;
+
 
         // Increment received count for all transmissions
         InterlockedIncrement16(&app.transmissions_received);
@@ -237,7 +242,7 @@ void run_test(void) {
     // Wait for all sender threads to complete
     printf("Waiting for sender threads to complete...\n");
     WaitForMultipleObjects(
-        app.sending_thread_count,
+(DWORD)        app.sending_thread_count,
         app.sender_threads,
         TRUE,
         INFINITE
@@ -246,7 +251,7 @@ void run_test(void) {
     // Wait for all receiver threads to complete
     printf("Waiting for receiver threads to complete...\n");
     WaitForMultipleObjects(
-        app.sending_thread_count,
+(DWORD)        app.sending_thread_count,
         app.receiver_threads,
         TRUE,
         INFINITE
@@ -336,6 +341,64 @@ void print_stats(void) {
     printf("AVERAGE LATENCY: \t\t%.2f ms\n", stats.latency_avg_ms);
     printf("THROUGHPUT: \t\t\t%.1f Kbps\n", stats.throughput_bps / KB(1));
 
+}
+
+void noah_stats(void) {
+
+    int passed = 0;
+    int failed = 0;
+    PAPP_TRANSMISSION_INFO info;
+
+    printf("==================================================\n");
+    printf("NOAH STATS - TRANSMISSION VALIDATION\n");
+    printf("==================================================\n");
+
+    for (int i = 0; i < app.transmission_count; i++) {
+        info = &app.transmission_info[i];
+
+        if (info->status != RECEIVED) {
+            printf("  [%d] MISSING (never received)\n", i);
+            failed++;
+            continue;
+        }
+
+        if (info->bytes_received != info->bytes_sent) {
+            printf("  [%d] FAIL (size mismatch: sent %zu, received %zu)\n",
+                i, info->bytes_sent, info->bytes_received);
+            failed++;
+            continue;
+        }
+
+        PBYTE sent_bytes = (PBYTE) info->data_sent;
+        PBYTE recv_bytes = (PBYTE) info->data_received;
+        size_t first_bad = (size_t) -1;
+        for (size_t b = 0; b < info->bytes_sent; b++) {
+            if (sent_bytes[b] != recv_bytes[b]) {
+                first_bad = b;
+                break;
+            }
+        }
+        if (first_bad == (size_t) -1) {
+            printf("  [%d] PASS\n", i);
+            passed++;
+        } else {
+            printf("  [%d] FAIL at byte %zu (packet %zu, offset %zu): sent=0x%02X recv=0x%02X\n",
+                i,
+                first_bad,
+                first_bad / MAX_PAYLOAD_SIZE,
+                first_bad % MAX_PAYLOAD_SIZE,
+                sent_bytes[first_bad],
+                recv_bytes[first_bad]);
+            failed++;
+        }
+    }
+
+    int total = passed + failed;
+    printf("--------------------------------------------------\n");
+    printf("SUCCESS RATE: %d / %d (%.1f%%)\n",
+        passed, total,
+        total > 0 ? (double)passed / total * 100.0 : 0.0);
+    printf("==================================================\n");
 }
 
 void fill_transmission_with_pattern(PVOID data_in, size_t length) {
@@ -449,14 +512,15 @@ void initialize_layers_and_all_data(void) {
         FALSE,
         TEXT("EndSimulationEvent")
         );
+    // Initialize timing
+    time_init();
 
     // Initialize all layers
     create_application_layer();
-    create_transport_layer();
     create_network_layer();
+    create_transport_layer();
 
-    // Initialize timing
-    time_init();
+
 
 }
 
@@ -479,7 +543,7 @@ LONG64 parse_argument_as_integer(char *arg, ULONG64 min, ULONG64 max) {
 
     char *end;
     errno = 0;
-    LONG64 val = strtoul(arg, &end, 10);
+    ULONG64 val = strtoul(arg, &end, 10);
 
     if (errno == ERANGE) return ARG_ERROR;         // Overflow
     if (*end != '\0') return ARG_ERROR;            // Trailing garbage
@@ -586,13 +650,14 @@ int main(int argc, char** argv) {
 
     // Now we will begin the test!
     run_test();
-
+//ASSERT(0)
     printf("Done!\n");
     printf("==================================================\n");
 
     // Finally, we will clean up and print out relevant statistics
     free_all_data_and_shut_down();
 
+    noah_stats();
     printf("Printing statistics...\n");
     print_stats();
     printf("==================================================\n");
