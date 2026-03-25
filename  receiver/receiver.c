@@ -18,7 +18,7 @@ void initialize_cache(void){
     g_receiver_state.packet_cache.slot_counter_writer = 0;
 
     // Initialize the buffer that we will write into
-    memset(g_receiver_state.packet_cache.packet_space, 0, BUFFER_SIZE_IN_PACKETS);
+    memset(g_receiver_state.packet_cache.packet_space, 0, sizeof(DATA_PACKET)*BUFFER_SIZE_IN_PACKETS);
 
     // Initialize Bitmaps
     memset(g_receiver_state.packet_cache.reserve_cache_slot, 0,
@@ -58,8 +58,7 @@ void init_received_transmission(ULONG32 id, ULONG32 num_packets) {
         printf("Failed to commit memory for transmission info sparse array\n");
         exit(1);
     }
-    // VirtualAlloc MEM_COMMIT gives zeroed pages on first commit.
-    // Do NOT memset here — subsequent calls would wipe initializationStarted/Complete flags.
+    //memset((LPVOID) pageDataStartsOn, 0, pageDataEndsOn - pageDataStartsOn + PAGE_SIZE_IN_BYTES);
 
     // if someone else has started the initialization wait for it to finish
     if (_interlockedbittestandset64(&(g_receiver_state.transmission_info_sparse_array[id].initializationStarted), 0) == 1) {
@@ -157,14 +156,16 @@ void document_received_transmission(PDATA_PACKET pkt) {
     ULONG64 bitmapIndex = packetNumber / 64;
     LONG64 bitIndex = packetNumber % 64;
 
+    // if the bit is already set, we don't need to do anything because the packet has already been sent over the wire
     ULONG64 output;
     output = _interlockedbittestandset64(&transmission_info->status_bitmap[bitmapIndex], bitIndex);
-    // If bit was already set, this is a duplicate packet — skip it
     if(output == 1) {
         return;
     }
 
     ULONG64 addressToWrite = (ULONG64) transmission_info->transmission_data + packetNumber * 1024;
+
+#if 1
     ULONG64 pageDataStartsOn = addressToWrite & ~(PAGE_SIZE_IN_BYTES - 1);
     ULONG64 pageDataEndsOn = (addressToWrite + PACKET_PAYLOAD_SIZE_IN_BYTES - 1) & ~(PAGE_SIZE_IN_BYTES - 1);
 
@@ -172,6 +173,10 @@ void document_received_transmission(PDATA_PACKET pkt) {
         printf("Failed to commit memory for transmission data\n");
         exit(1);
     }
+#endif
+
+
+
 
 
 
@@ -188,8 +193,6 @@ void document_received_transmission(PDATA_PACKET pkt) {
         SetEvent(transmission_info->transmission_complete_event);
     }
 }
-
-
 
 /**
  * @pre Assume the packet passed in has already been ACK'd in global data
@@ -227,6 +230,8 @@ COMM_PACKET assemble_COMM_packet_from_packet(DATA_PACKET pkt) {
     commPacket.bytes_in_bitmap = numBytes;
     commPacket.first_packet_index = (bitmapStart * 8);
 
+
+
     // todo make beckett right a multiple of eight to my bits.
     memcpy(&commPacket.bitmap, &g_receiver_state.transmission_info_sparse_array[pkt.transmission_id].status_bitmap[bitmapStart], numBytes);
     return commPacket;
@@ -249,7 +254,9 @@ DWORD main_receiver_thread(LPVOID param) {
 
     WaitForSingleObject(simulation_begin, INFINITE);
 
+    DATA_PACKET packet;
 
+    memset(&packet, 0, sizeof(DATA_PACKET));
     while (TRUE) {
       if (WaitForSingleObject(simulation_end, 0) == WAIT_OBJECT_0) {
           return 0;
@@ -258,18 +265,32 @@ DWORD main_receiver_thread(LPVOID param) {
         // wait for multiple object
        WaitForSingleObject(g_receiver_state.packet_cache.packets_waiting_in_cache, INFINITE);
 
+        while (TRUE) {
+            ULONG64 return_value = read_from_cache(&packet);
+            if( return_value == PACKET_FAILED_TO_READ) {
+                break;
+            }
+        #if SUPERFLUOUS_PRINTS
+            printf("uncached packet transmission ID %d and index %d\n", packet.transmission_id, packet.index_in_transmission);
 
-       // Drain all available packets from the cache.
-       DATA_PACKET packet;
-       while (read_from_cache(&packet) == PACKET_SUCCESSFULLY_READ) {
-           // Validate packet — cache may return stale data from reused slots
-           if (packet.must_be_zero != 0 || packet.transmission_id >= 1024) {
-               break;
-           }
+        #endif
+
+            ASSERT(packet.must_be_zero == 0)
+            // this is kind of code that represents that this packet is just zeroed
+            ASSERT(packet.n_packets_in_transmission != 0)
            document_received_transmission(&packet);
-           COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
-           send_packet((PPACKET) &commPacket, ROLE_RECEIVER);
-       }
+
+
+            COMM_PACKET commPacket = assemble_COMM_packet_from_packet(packet);
+            //DebugBreak();
+
+            send_packet((PPACKET) &commPacket, ROLE_RECEIVER);
+
+        #if SUPERFLUOUS_PRINTS
+
+            printf("sent ack with id %llu and index %llu \n", commPacket.transmission_id, commPacket.first_packet_index);
+        #endif
+            }
 
     }
 
@@ -279,9 +300,10 @@ boolean check_transmission(UINT32 transmission_id) {
 
     __try {
         PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
-        // Must verify initialization is complete — VirtualAlloc zeros the page,
-        // so num_packets_left starts at 0 before init sets it to the real count.
-        if (info->initializationComplete && info->num_packets_left == 0)
+        // Must verify initialization is complete before trusting num_packets_left.
+        // Without this, a race between memset (zeroing num_packets_left) and the
+        // assignment of the real packet count causes a false TRUE.
+        if (info->initializationComplete == 1 && info->num_packets_left == 0)
             return TRUE;
 
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -293,33 +315,57 @@ boolean check_transmission(UINT32 transmission_id) {
 
 
 int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
+    // TODO: Student implementation
+    // - Receive packets via receive_packet() or try_receive_packet()
+    // - Reassemble packets into complete transmissions
+    // - When complete, fill in out_id, dest, out_length and return 1
+    int result;
+    //Checks to see if the transmission has been initialized
 
-    // First check if already complete (fast path)
-    if (check_transmission(transmission_id)) {
-        PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
-        memcpy(dest, info->transmission_data, info->file_size_in_bytes);
-        *out_length = info->file_size_in_bytes;
-        return TRANSMISSION_RECEIVED;
-    }
+    ULONG64 time = time_now_ms();
+    ULONG64 deadline = time + timeout_ms;
 
-    // Poll for DATA packets from the network, write them to cache for main_receiver_thread.
-    ULONG64 deadline = time_now_ms() + timeout_ms;
+    while (TRUE) {
 
-    while (time_now_ms() < deadline) {
 
+        // check to see if it is complete, works regardless of whether it is initialized or not
         if (check_transmission(transmission_id)) {
+
             PTRANSMISSION_INFO info = &g_receiver_state.transmission_info_sparse_array[transmission_id];
-            memcpy(dest, info->transmission_data, info->file_size_in_bytes);
-            *out_length = info->file_size_in_bytes;
+            size_t file_size = info->file_size_in_bytes;
+
+            // Write all data from global struct into this transmission's memory (dest)
+            memcpy(dest, info->transmission_data, file_size);
+
+            // Update the transmission's size (out_length)
+            *out_length = file_size;
+
+            // Finish the transmission and return
             return TRANSMISSION_RECEIVED;
+
         }
 
-        // Receive DATA packets from the network and write them to cache
+        //Calls receive packet at the dest and saves the result to check if transmission was successful
+        //Here I create a local data packet to memcopy space for the transmission
         DATA_PACKET local_pkt;
-        int receive_status = receive_packet((PPACKET)&local_pkt, 10, ROLE_RECEIVER);
-        if (receive_status == NO_PACKET_AVAILABLE) continue;
+        result = receive_packet((PPACKET) &local_pkt, 10, ROLE_RECEIVER);
+
+        if (result == NO_PACKET_AVAILABLE) {
+            continue;
+        }
+#if SUPERFLUOUS_PRINTS
+        printf("Cached packet with transmission ID %d and index %d\n", local_pkt.transmission_id, local_pkt.index_in_transmission);
+#endif
+
         write_to_cache(&local_pkt);
     }
+#if DEBUG
+    if (time_now_ms() > deadline) {
+        printf("Timed out waiting for transmission %d\n", transmission_id);
+    }
+#endif
 
+    printf("Timed out waiting for transmission %d\n", transmission_id);
+    //If we get to this point, we know runtime exceeded the deadline threshold
     return NO_TRANSMISSION_AVAILABLE;
 }

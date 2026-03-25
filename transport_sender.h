@@ -86,7 +86,6 @@ typedef struct {
 } SENDER_STATE, *PSENDER_STATE;
 
 extern SENDER_STATE g_sender_state;
-extern CRITICAL_SECTION g_work_array_lock;
 
 
 /**
