@@ -7,7 +7,6 @@
 
 
 SENDER_STATE g_sender_state;
-CRITICAL_SECTION g_work_array_lock;
 
 
 VOID create_sender(VOID)
@@ -62,11 +61,11 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
         numPackets++;
     }
 
-    UINT32 starting_packet_numer = minion_info.chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
+    UINT32 starting_packet_number = minion_info.chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
 
     for (int i = 0; i < numPackets; i++) {
         // I feel like there is an easier way of organizing the fields, but it would require a lot of blick work.
-        packet.index_in_transmission = starting_packet_numer + i;
+        packet.index_in_transmission = starting_packet_number + i;
         packet.transmission_id = minion_info.transmission_id;
         packet.n_packets_in_transmission = minion_info.n_packets_in_transmission;
         packet.must_be_zero = 0;
@@ -92,55 +91,6 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
     printf("Sending packet with id %llu and index %llu\n", packet.transmission_id,packet.index_in_transmission);
 #endif
     }
-
-#if 0
-    ULONG64 bytes_left_to_packetize = bytes_to_packetize;
-    for (int i = 0; i < bytes_to_packetize; i+= MAX_PAYLOAD_SIZE)
-    {
-        DATA_PACKET packet;
-
-        if (bytes_left_to_packetize > MAX_PAYLOAD_SIZE)
-        {
-            bytes_left_to_packetize -= MAX_PAYLOAD_SIZE;
-            packet.bytes_in_payload = MAX_PAYLOAD_SIZE;
-        }
-        else
-        {
-            packet.bytes_in_payload = bytes_left_to_packetize;
-        }
-
-        __try {
-            memcpy(packet.data, transmission_data + i, packet.bytes_in_payload);
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER){
-            // Not sure what to put here?
-        }
-
-
-
-        // Hardcoded this to 16 since that's what we decided these will be but don't like having magic numbers here.
-        packet.bytes_in_header = 16;
-        packet.bytes_in_data_fields = 16;
-
-        packet.index_in_transmission = minion_info.chunk_index * MAX_CHUNK_SIZE_IN_PACKETS + (i / MAX_PAYLOAD_SIZE);
-        packet.must_be_zero = 0;
-        packet.n_packets_in_transmission = minion_info.n_packets_in_transmission;
-        packet.transmission_id = minion_info.transmission_id;
-
-        // Do I want to do this here??
-        // g_sender_state.transmissions_in_progress[minion_info.transmission_id]
-        // .number_of_packets_in_transmission++;
-
-        // Not using send packet batch for now.
-        if (send_packet((PPACKET) &packet, ROLE_SENDER) == PACKET_REJECTED)
-        {
-            DebugBreak();
-        }
-
-    }
-
-#endif
-
 }
 
 VOID send_packet_batch(ULONG64 number_of_packets_to_send)

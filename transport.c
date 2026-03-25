@@ -29,8 +29,9 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
     // - Break data into packets tagged with transmission_id
     // - Send packets via send_packet()
 
+#if SUPERFLUOUS_PRINTS
     printf("Sending transmission %d length %llu\n", transmission_id, length);
-
+#endif
 
     PSENDER_TRANSMISSION_INFO current_transmission = &g_sender_state.transmissions_in_progress[transmission_id];
 
@@ -47,14 +48,19 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
     current_transmission->total_bytes = length;
     current_transmission->sending_complete_event = CreateEvent(NULL, FALSE, FALSE, NULL);
 
+
+    // #TODO: Make this lock free
+    EnterCriticalSection(&g_work_array_lock);
     // Add the transmission ID to the work array
     ULONG64 write_index = g_sender_state.transmissions_queue.next_write_index % WORK_ARRAY_SIZE;
-    g_sender_state.transmissions_queue.work_array[write_index] = transmission_id;
+
+    g_sender_state.transmissions_queue.work_array[write_index % WORK_ARRAY_SIZE] = transmission_id;
 
     // Increase the write index (How many IDs we have written in TOTAL to the transmission queue, this is
     // different from the index we are on in get_next_transmission_id)
     g_sender_state.transmissions_queue.next_write_index++;
 
+    LeaveCriticalSection(&g_work_array_lock);
 
     WaitForSingleObject(current_transmission->sending_complete_event, INFINITE);
     
@@ -64,12 +70,15 @@ int send_transmission(UINT32 transmission_id, PVOID data, SIZE_T length)
 int receive_transmission(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
     int returnVal = reciever_handler(transmission_id, dest, out_length, timeout_ms);
 
+#if SUPERFLUOUS_PRINTS
     printf("Received transmission %d length %llu\n", transmission_id, *out_length);
-
+#endif
     return returnVal;
 }
 BYTE write_to_cache(PDATA_PACKET Niko_Packet) {
+#if SUPERFLUOUS_PRINTS
     printf(".");
+#endif
     // Make sure packet exists/if Niko does a bad job
     ASSERT(Niko_Packet);
     // Attempt to reserve slot in cache to write into
