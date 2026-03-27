@@ -38,17 +38,7 @@ typedef struct {
 DEBUG_INFO debug_info;
 #endif
 
-#define SLOTS_PER_LAYER 4
-/**
- * A SLN represents a node on a singly-linked list of slots.
- * The list of slots is part of the PM struct, keeping track of
- * all the slots that have been allocated for the packet.
- **/
-typedef struct slot_list_node {
-    UINT32 number_of_slots_reserved_at_node;
-    UINT32 slot_numbers[SLOTS_PER_LAYER];
-    PVOID next;
-} SLN, *PSLN;
+#define TYPICAL_SLOT_CAPACITY 4
 
 /**
  * A PM struct encapsulates all the data for one packet. It has the
@@ -65,8 +55,9 @@ typedef struct packet_metadata {
     volatile LONG status;
     UINT32 number_of_slots_reserved;
     ULONG64 total_size_in_bytes;
-    SLN slots;
     ULONG64 arrival_time;
+    UINT32 capacity_of_slot_number_array;
+    PUINT32 slot_numbers;
 } PM, *PPM;
 
 /**
@@ -161,12 +152,20 @@ VOID net_init(PNET n) {
 void net_free(PNET n) {
 
     free(n->net_lock.bitmap);
-    free(n->metadata_slots);    // TODO free all nodes in the slot lists
+
+    // Free all slot lists in the PMs
+    PPM pm = n->metadata_slots;
+    for (; pm < n->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS; pm++) {
+        if (pm->slot_numbers != NULL) free(pm->slot_numbers);
+    }
+    free(n->metadata_slots);
+
     VirtualFree(
                     n->packet_buffer,
             0,
         MEM_RELEASE
                 );
+
     CloseHandle(n->packets_present);
 }
 
@@ -239,34 +238,30 @@ PPM get_next_pm(PNET net) {
 }
 
 /**
- * @brief Assigns the given slot to the given PM.
+ * @brief Assigns the given slot to the given PM. If the PM's slot buffer is full,
+ * double its size, then add it.
  * @param pm The PM to be given this slot
  * @param slot The slot to give
  */
-void add_slot(PPM pm, ULONG64 slot) {
-    PSLN current = &pm->slots;
-    PSLN next = current->next;
-    UINT32 slot_count = current->number_of_slots_reserved_at_node;
+void add_slot(PPM pm, UINT32 slot) {
 
-    // Traverse through the slot list, if necessary, until reaching a level with available slots.
-    while (slot_count >= SLOTS_PER_LAYER) {
+    // Check the array: if its capacity is less than the number of slots we have plus one,
+    // Double its size and copy over its slots.
+    if (pm->capacity_of_slot_number_array <= pm->number_of_slots_reserved) {
 
-        if (!next) {
-            next = zero_malloc(sizeof(SLN));     // TODO chat with Landy about this.
-            // Save the reference to this newly allocated memory
-            current->next = next;
+        // Here we add one to address the case of a size of zero.
+        UINT32 new_capacity = pm->capacity_of_slot_number_array * 2 + 1;
+        void* temp = realloc(pm->slot_numbers, new_capacity * sizeof(UINT32));
+        if (temp == NULL) {
+            ASSERT(FALSE);
+            return;
         }
-        if (!next) ASSERT(FALSE);
-
-        // Move our variables along to the next layer
-        current = next;
-        next = current->next;
-        slot_count = current->number_of_slots_reserved_at_node;
+        pm->slot_numbers = temp;
+        pm->capacity_of_slot_number_array = new_capacity;
     }
-
-    current->slot_numbers[slot_count] = (UINT32)slot;
-    current->number_of_slots_reserved_at_node++;
+    pm->slot_numbers[pm->number_of_slots_reserved] = slot;
     pm->number_of_slots_reserved++;
+
     ASSERT(pm->number_of_slots_reserved <= MAX_PAYLOAD_SIZE / NETWORK_BUFFER_SLOT_SIZE_IN_BYTES + 1);
 }
 
@@ -292,7 +287,7 @@ void acquire_slots(PPM pm, UINT32 slots_needed, PNET net) {
     BOOL result;
 
     for (int i = 0; i < TIMES_TO_SCAN_BITMAP_BEFORE_EXIT; i++) {
-        ULONG64 slot = 0;
+        UINT32 slot = 0;
         ULONG64 offset = 0;
         ULONG64 mask = 0;
         volatile PULONG64 row = bitmap_start;
@@ -353,31 +348,24 @@ void release_slot(PULONG64 bitmap, UINT32 slot) {
 
 void release_all_slots(PPM pm, PNET net) {
 
-    PSLN current = &pm->slots;
-    PSLN next = current->next;
-    UINT32 slots_to_release = current->number_of_slots_reserved_at_node;
-    UINT32 slot;
-
-    while (TRUE) {
-
-        if (slots_to_release == 0) break;
-        ASSERT(slots_to_release <= SLOTS_PER_LAYER);
-
-        slot = current->slot_numbers[slots_to_release - 1];
-        release_slot(net->net_lock.bitmap, slot);
-        slots_to_release--;
-
-        if (slots_to_release != 0) continue;
-        current->number_of_slots_reserved_at_node = 0;
-
-        if (!next) break;
-
-        current = next;
-        next = current->next;
-        slots_to_release = current->number_of_slots_reserved_at_node;
+    // Release all slots
+    for (UINT32 i = 0; i < pm->number_of_slots_reserved; i++) {
+        release_slot(net->net_lock.bitmap, pm->slot_numbers[i]);
     }
 
     pm->number_of_slots_reserved = 0;
+
+    // Memory management: if the array is unusually large, reallocate it
+    // to be a more typical size
+    if (pm->capacity_of_slot_number_array <= TYPICAL_SLOT_CAPACITY) return;
+
+    // Shrink the slot array back to baseline if it grew beyond typical use
+    void* temp = realloc(pm->slot_numbers, TYPICAL_SLOT_CAPACITY * sizeof(UINT32));
+    if (temp != NULL) {
+        pm->slot_numbers = temp;
+        pm->capacity_of_slot_number_array = TYPICAL_SLOT_CAPACITY;
+    }
+    // If realloc fails, we keep the oversized array — no harm done
 }
 
 
@@ -387,36 +375,21 @@ void release_all_slots(PPM pm, PNET net) {
  * @param slots_needed The total number of slots needed by this packet
  */
 void release_extra_slots(PPM pm, UINT32 slots_needed, PNET net) {
-    UINT32 slots_to_keep = slots_needed;
+
+    if (pm->number_of_slots_reserved == slots_needed) return;
+
+    // Double-check to ensure that the slots reserved are indeed greater than the need
+    ASSERT(pm->number_of_slots_reserved > slots_needed);
+    ASSERT(slots_needed > 0);
     UINT32 slots_to_release = pm->number_of_slots_reserved - slots_needed;
-    UINT32 slots_checked_so_far = 0;
-    UINT32 index;
-    PSLN current = &pm->slots;
 
-    // While we have full layers to keep, move down the list
-    while (current->number_of_slots_reserved_at_node == SLOTS_PER_LAYER &&
-        slots_to_keep - slots_checked_so_far >= SLOTS_PER_LAYER) {
-        slots_checked_so_far += SLOTS_PER_LAYER;
-        current = current->next;
-    }
+    // Find the location in the slot numbers from which we will remove.
+    UINT32 index = pm->number_of_slots_reserved - 1;
 
-    ASSERT(slots_to_keep - slots_checked_so_far < SLOTS_PER_LAYER);
-
-    index = slots_to_keep - slots_checked_so_far;
-
-    while (TRUE) {
-
-        if (slots_checked_so_far == slots_to_keep + slots_to_release) break;
-
-        release_slot(net->net_lock.bitmap, current->slot_numbers[index]);
-        index++;
-
-        if (index == SLOTS_PER_LAYER) {
-            current = current->next;
-            index = 0;
-        }
-
-        slots_checked_so_far++;
+    // Release each extra slot
+    for (UINT32 i = 0; i < slots_to_release; i++) {
+        release_slot(net->net_lock.bitmap, pm->slot_numbers[index]);
+        index--;
     }
 
     pm->number_of_slots_reserved = slots_needed;
@@ -433,11 +406,7 @@ void release_extra_slots(PPM pm, UINT32 slots_needed, PNET net) {
 ULONG64 try_get_packet_from_buffer(PNET pnet, PPM* pm_of_caller) {
 
     ULONG64 closest_eta = MAXULONG64;
-  //  ASSERT(pnet->metadata_slots != NULL);
-    PPM pm =pnet->metadata_slots;
-   // ASSERT(pm != NULL);
-
-
+    PPM pm = pnet->metadata_slots;
 
     for (
         ;
@@ -468,8 +437,6 @@ ULONG64 try_get_packet_from_buffer(PNET pnet, PPM* pm_of_caller) {
  */
 void copy_packet_data_into_slots(PPM pm, PPACKET pkt, PNET net) {
 
-    PSLN current = &pm->slots;
-    PSLN next = current->next;
     PBYTE src = (PBYTE) pkt;
     PBYTE dest;
     UINT32 slot;
@@ -479,10 +446,10 @@ void copy_packet_data_into_slots(PPM pm, PPACKET pkt, PNET net) {
     UINT32 bytes_to_copy_for_this_slot = 0;
 
 
-    while (TRUE) {
+    for (; index < num_copies; index++) {
 
         // First, we grab the next slot to find its corresponding offset in the buffer
-        slot = current->slot_numbers[index];
+        slot = pm->slot_numbers[index];
         dest = net->packet_buffer + slot * NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
 
         // We assume we need to copy the whole slot. But if we don't need it all, we only
@@ -501,31 +468,20 @@ void copy_packet_data_into_slots(PPM pm, PPACKET pkt, PNET net) {
             memcpy(dest, src, bytes_to_copy_for_this_slot);
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {
-            LPVOID result = VirtualAlloc(dest, NETWORK_BUFFER_SLOT_SIZE_IN_BYTES, MEM_COMMIT, PAGE_READWRITE);
+            LPVOID result = VirtualAlloc(
+                                dest,
+                                NETWORK_BUFFER_SLOT_SIZE_IN_BYTES,
+                                MEM_COMMIT,
+                                PAGE_READWRITE
+                                );
             ASSERT(result);
             memcpy(dest, src, bytes_to_copy_for_this_slot);
         }
-        num_copies--;
-
-        // If we have finished our last copy, we break and return!
-        if (num_copies == 0) {
-            ASSERT(total_bytes_to_copy == 0);
-            return;
-        }
-
-        ASSERT(bytes_to_copy_for_this_slot == NETWORK_BUFFER_SLOT_SIZE_IN_BYTES);
 
         // Advance the pointer as well as the slot index
         src += bytes_to_copy_for_this_slot;
-        index++;
-
-        // If we have finished up a layer in the slot list, move on to the next layer
-        if (index == SLOTS_PER_LAYER) {
-            index = 0;
-            current = next;
-            next = current->next;
-        }
     }
+    ASSERT(total_bytes_to_copy == 0);
 }
 
 
@@ -536,8 +492,6 @@ void copy_packet_data_into_slots(PPM pm, PPACKET pkt, PNET net) {
  */
 void copy_from_slots_to_packet(PPM pm, PPACKET pkt, PNET net) {
 
-    PSLN current = &pm->slots;
-    PSLN next = current->next;
     PBYTE dest = (PBYTE) pkt;
     PBYTE src;
     UINT32 slot;
@@ -546,10 +500,10 @@ void copy_from_slots_to_packet(PPM pm, PPACKET pkt, PNET net) {
     ULONG64 bytes_left_to_copy = pm->total_size_in_bytes;
     UINT32 bytes_to_copy_for_this_slot = 0;
 
-    while (TRUE) {
+    for (; index < num_copies; index++) {
 
         // Find the location in the buffer corresponding with this slot
-        slot = current->slot_numbers[index];
+        slot = pm->slot_numbers[index];
         src = net->packet_buffer + slot * NETWORK_BUFFER_SLOT_SIZE_IN_BYTES;
 
         // Calculate the size of the copy
@@ -564,25 +518,10 @@ void copy_from_slots_to_packet(PPM pm, PPACKET pkt, PNET net) {
         // We copy our data into the slot
         memcpy(dest, src, bytes_to_copy_for_this_slot);
 
-        // If we have done the final copy, we are good to go!
-        num_copies--;
-        if (num_copies == 0) {
-            ASSERT(bytes_left_to_copy == 0);
-            return;
-        }
-
         // Move the destination pointer along and move on to the next slot
-        ASSERT(bytes_to_copy_for_this_slot == NETWORK_BUFFER_SLOT_SIZE_IN_BYTES);
         dest += bytes_to_copy_for_this_slot;
-        index++;
-
-        // If we have completed a slot layer, move on to the next one
-        if (index == SLOTS_PER_LAYER) {
-            index = 0;
-            current = next;
-            next = current->next;
-        }
     }
+    ASSERT(bytes_left_to_copy == 0);
 }
 
 #if DEBUG
@@ -602,11 +541,10 @@ int send_packet(PPACKET pkt, int role) {
     if (pkt->bytes_in_payload > MAX_PAYLOAD_SIZE)       return PACKET_REJECTED;
     if (role != ROLE_SENDER && role != ROLE_RECEIVER)   return PACKET_REJECTED;
 
-
     // TODO: Apply network unreliability (drop, duplicate, corrupt, reorder)
 
     // Allocate all necessary stack variables
-    PNET n;
+    PNET network;
     PPM pm;
     UINT32 slots_needed;
     ULONG64 total_packet_size_in_bytes = 0;
@@ -632,8 +570,8 @@ int send_packet(PPACKET pkt, int role) {
     total_packet_size_in_bytes += packet_payload_size_in_bytes;
 
     // Select network based on role
-    n = &network_state.SR_net;
-    if (role == ROLE_RECEIVER) n = &network_state.RS_net;
+    network = &network_state.SR_net;
+    if (role == ROLE_RECEIVER) network = &network_state.RS_net;
 
     // Determine the number of slots needed for this packet
     slots_needed = (UINT32) (total_packet_size_in_bytes + NETWORK_BUFFER_SLOT_SIZE_IN_BYTES - 1)
@@ -642,17 +580,17 @@ int send_packet(PPACKET pkt, int role) {
 
     // Find an available PM. This will always succeed, as it will claim the next PM, even if it is in
     // its READY state.
-    pm = get_next_pm(n);
+    pm = get_next_pm(network);
     ASSERT(pm->status == WRITING);
     pm->total_size_in_bytes = total_packet_size_in_bytes;
 
     // Now that we have a PM, we need to get data slots for it.
-    acquire_slots(pm, slots_needed, n);
+    acquire_slots(pm, slots_needed, network);
 
     // If there are not enough available, we will release those slots and return.
     // We will also release the PM, putting it back in its FREE state.
     if (pm->number_of_slots_reserved < slots_needed) {
-        release_all_slots(pm, n);
+        release_all_slots(pm, network);
         pm->status = FREE;
 #if DEBUG
         debug_info.packets_dropped_for_lack_of_slots++;
@@ -663,7 +601,7 @@ int send_packet(PPACKET pkt, int role) {
     // When we claimed this PM, it is possible we took one in its READY state. If that was the case,
     // we already have some number of slots reserved. We need to see if it is too many, and free the extras.
     if (pm->number_of_slots_reserved > slots_needed) {
-        release_extra_slots(pm, slots_needed, n);
+        release_extra_slots(pm, slots_needed, network);
 #if DEBUG
         flag = TRUE;
         over_grabbed = pm;
@@ -675,14 +613,14 @@ int send_packet(PPACKET pkt, int role) {
 
     // Great! We have all necessary slots. Let's write our data into the memory buffer
     __try {
-        copy_packet_data_into_slots(pm, pkt, n);
+        copy_packet_data_into_slots(pm, pkt, network);
     }
     // If the memcpy fails, then there must be a problem with the pointer
     // passed in from the transport layer. We will reject the packet
     // and return.
     __except (EXCEPTION_EXECUTE_HANDLER) {
         printf("Error copying from transport packet.\n");
-        release_all_slots(pm, n);
+        release_all_slots(pm, network);
         pm->status = FREE;
         ASSERT(FALSE);
         return PACKET_REJECTED;
@@ -692,7 +630,7 @@ int send_packet(PPACKET pkt, int role) {
     // and set its status as READY.
     pm->arrival_time = time_now_ms() + LATENCY_MS;
     pm->status = READY;
-    SetEvent(n->packets_present);
+    SetEvent(network->packets_present);
 
     return PACKET_ACCEPTED;
 }

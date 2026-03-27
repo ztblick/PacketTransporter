@@ -87,8 +87,9 @@
  */
 #define NETWORK_BUFFER_CAPACITY_IN_BYTES       (MB(16))
 #define NETWORK_BUFFER_SLOT_SIZE_IN_BYTES      (1024)
-#define NETWORK_BUFFER_NUMBER_OF_SLOTS         ((NETWORK_BUFFER_CAPACITY_IN_BYTES + (NETWORK_BUFFER_SLOT_SIZE_IN_BYTES - 1)) / NETWORK_BUFFER_SLOT_SIZE_IN_BYTES)
-
+#define NETWORK_BUFFER_NUMBER_OF_SLOTS         ((NETWORK_BUFFER_CAPACITY_IN_BYTES +             \
+                                                (NETWORK_BUFFER_SLOT_SIZE_IN_BYTES - 1)) /      \
+                                                NETWORK_BUFFER_SLOT_SIZE_IN_BYTES)
 
 // The default timeout for a network helper thread, in milliseconds
 #define NET_RETRY_MS                      (5)
