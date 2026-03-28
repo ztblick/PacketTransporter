@@ -40,11 +40,18 @@ DEBUG_INFO debug_info;
 
 #define TYPICAL_SLOT_CAPACITY 4
 
+// TODO create list_head for next_packet_list, add it to the network struct
+// TODO initialize this list in the init function
+
+// TODO create timer wheel in network struct
+// TODO initialize it in the init function
+
+// TODO free all this data appropriately
+
 /**
  * A PM struct encapsulates all the data for one packet. It has the
  * list of the slots in the buffer that contain its data, as well
- * as the total packet size. It also has a status (EMPTY, WRITING,
- * READING, READY) which also serves as a lock.
+ * as the total packet size.
  *
  * By default, a PM keeps track of up to four slots in its array.
  * If more than 4 slots are required for a packet (i.e. if the packet
@@ -52,7 +59,7 @@ DEBUG_INFO debug_info;
  * extra slot list.
  */
 typedef struct packet_metadata {
-    volatile LONG status;
+    SLIST_HEADER flink;
     UINT32 number_of_slots_reserved;
     ULONG64 total_size_in_bytes;
     ULONG64 arrival_time;
@@ -68,7 +75,7 @@ typedef struct packet_metadata {
  */
 typedef struct bitmap_lock {
     ULONG64 num_bits;
-    volatile PULONG64 bitmap;
+    volatile PLONG64 bitmap;
 } BIT_LOCK, *PBIT_LOCK;
 
 /**
@@ -78,8 +85,9 @@ typedef struct bitmap_lock {
  */
 typedef struct network {
     BIT_LOCK net_lock;
+    BIT_LOCK pm_lock;
     PPM metadata_slots;
-    volatile PPM next_PM;
+    volatile UINT32 next_PM_slot;
     PBYTE packet_buffer;
     HANDLE packets_present;
 } NET, *PNET;
@@ -97,9 +105,6 @@ typedef struct network_state {
 // This is our global net state variable, used to track all shared data.
 NET_STATE network_state;
 
-// These are our statuses for the PMs
-enum {FREE, WRITING, READY, READING};
-
 #if DEBUG
 void init_debug_info(void) {
     memset(&debug_info, 0, sizeof(DEBUG_INFO));
@@ -112,13 +117,15 @@ VOID net_init(PNET n) {
 
     ULONG64 number_of_slots = NETWORK_BUFFER_NUMBER_OF_SLOTS;
 
-    // Initialize bitmap lock. There is one bit per 1 KB slot in the buffer.
+    // Initialize bitmap locks. There is one bit per 1 KB slot in the buffer.
     // So the total number of bits is equal to the number of slots, meaning the number of
     // bytes is the ceiling of this value divided by 8.
     n->net_lock.num_bits = number_of_slots;
+    n->pm_lock.num_bits = number_of_slots;
 
     // All data in the bitmap is zeroed, so the initial state of each slot is unclaimed.
     n->net_lock.bitmap = zero_malloc((number_of_slots + 7) / 8);
+    n->pm_lock.bitmap = zero_malloc((number_of_slots + 7) / 8);
 
     // Initialize PMs.
     // All data is zeroed, which sets the initial status of each packet to FREE.
@@ -141,7 +148,7 @@ VOID net_init(PNET n) {
                                     );
 
     // Point the next_PM to the head of the PM array.
-    n->next_PM = n->metadata_slots;
+    n->next_PM_slot = 0;
 
 
 #if DEBUG
@@ -194,47 +201,61 @@ void free_network_layer(void) {
 }
 
 /**
- * @brief Returns a PM for the incoming packet. Overwrites old PMs in the READY state, if necessary.
- *
+ * @brief Finds an available PM.
+ * @return TRUE if a PM is found (to whom address_of_next_PM will now point).
+ *          FALSE if no PM is available.
  * @param net The network whose PMs are scanned
  * @return The PM that will be given to this packet.
  */
-PPM get_next_pm(PNET net) {
+BOOL get_next_pm(PNET net, PPM* address_of_next_PM) {
 
-    LONG status;
+    // Get a starting slot. If it's out of bounds, wrap.
+    UINT32 slot = net->next_PM_slot;
+    UINT32 last_slot = (slot + NETWORK_BUFFER_NUMBER_OF_SLOTS - 1) % NETWORK_BUFFER_NUMBER_OF_SLOTS;
+    PLONG64 bitmap = net->pm_lock.bitmap;
+    UINT32 old_slot = slot;
 
-    // Check the next PM. If it's out of bounds, wrap
-    PPM pm = net->next_PM;
-    PPM next_pm;
+    while (slot != last_slot) {
 
-    while (TRUE) {
+        // Recalculate row and offset
+        slot = slot % NETWORK_BUFFER_NUMBER_OF_SLOTS;
+        UINT32 row = slot / 64;
+        UINT32 offset = slot % 64;
+        ULONG64 mask = (1LL << offset);
 
-        // Get the status of the PM
-        status = pm->status;
+        // If the entire 64 bit chunk of the bitmap is set, advance to the next chunk.
+        if (bitmap[row] == MAXULONG64) {
+            old_slot = slot;
+            row++;
+            slot = (row * 64) % NETWORK_BUFFER_NUMBER_OF_SLOTS;
 
-        // If the PM can be claimed, we will take it!
-        if (status == FREE || status == READY) {
+            // It may be the case that this jump goes beyond our traversal. If that happens, we will want to return.
+            if (old_slot < last_slot && slot >= last_slot) return FALSE;
 
-            // Try to atomically claim this slot
-            if (InterlockedCompareExchange(&pm->status, WRITING, status) == status) {
-#if DEBUG
-                if (status == READY) debug_info.pms_overwritten++;
-                #endif
-                break;
-            }
+            continue;
         }
 
-        // Move on to the next slot. If it's out of bounds, wrap.
-        pm++;
-        if (pm >= net->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS) pm = net->metadata_slots;
+        // If this particular bit is set, advance.
+        if (bitmap[row] & mask) {
+            old_slot = slot;
+            slot++;
+            continue;
+        }
+
+        // Interlocked set it -- if you did not win, move on to the next bit
+        if (InterlockedBitTestAndSet64(&bitmap[row], offset)) {
+            old_slot = slot;
+            slot++;
+            continue;
+        }
+
+        // We got the PM! Now we update the address and return true
+        *address_of_next_PM = net->metadata_slots + slot;
+        net->next_PM_slot = slot;
+        return TRUE;
     }
 
-    // Move next pm along to the slot after this one
-    next_pm = pm + 1;
-    if (next_pm >= net->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS) next_pm = net->metadata_slots;
-    InterlockedExchangePointer((PVOID) &net->next_PM, next_pm);
-
-    return pm;
+    return FALSE;
 }
 
 /**
@@ -406,22 +427,43 @@ void release_extra_slots(PPM pm, UINT32 slots_needed, PNET net) {
 ULONG64 try_get_packet_from_buffer(PNET pnet, PPM* pm_of_caller) {
 
     ULONG64 closest_eta = MAXULONG64;
-    PPM pm = pnet->metadata_slots;
+    PPM pm;
+    PLONG64 bitmap = pnet->pm_lock.bitmap;
+    UINT32 slot = 0;
 
-    for (
-        ;
-        pm < pnet->metadata_slots + NETWORK_BUFFER_NUMBER_OF_SLOTS;
-        pm++) {
+    while (slot < NETWORK_BUFFER_NUMBER_OF_SLOTS) {
 
-        if (pm->status != READY) continue;
+        // Recalculate row and offset
+        UINT32 row = slot / 64;
+        UINT32 offset = slot % 64;
+        ULONG64 mask = (1LL << offset);
 
+        // If the entire 64 bit chunk of the bitmap is clear advance to the next chunk.
+        if (bitmap[row] == 0) {
+            slot = (row + 1) * 64 % NETWORK_BUFFER_NUMBER_OF_SLOTS;
+            continue;
+        }
+
+        // If this particular bit is clear, advance.
+        if (!(bitmap[row] & mask)) {
+            slot++;
+            continue;
+        }
+
+        // Okay, let's consider this PM.
+        pm = pnet->metadata_slots + slot;
+
+        // If it has not "arrived" yet, save its ETA
         if (pm->arrival_time > time_now_ms()) {
             closest_eta = min(closest_eta, pm->arrival_time);
             continue;
         }
 
-        if (InterlockedCompareExchange(&pm->status, READING, READY) != READY) continue;
-
+        // Okay, we are in business! This slot has arrived. We update our address and return.
+        // Note: this is a temporary step to remove race conditions while testing before we move on to
+        // our next architectural change.
+        // TODO: remove me when you make the changes
+        pm->arrival_time = MAXULONG64;
         *pm_of_caller = pm;
         return 0;
     }
@@ -529,6 +571,24 @@ void copy_from_slots_to_packet(PPM pm, PPACKET pkt, PNET net) {
     PPM over_grabbed;
 #endif
 
+/**
+ *
+ * @param pm The packet metadata to free
+ * @param pnet The network that holds the packet metadata
+ */
+void free_pm(PPM pm, PNET network) {
+
+    // Free up all data in the buffer
+    release_all_slots(pm, network);
+
+    // Get the index of the PM in the array so we know which bit in the bitmap to clear.
+    UINT32 index = (UINT32)(pm - network->metadata_slots);
+
+    // Clear the bitmap
+    UINT8 result = InterlockedBitTestAndReset64(&network->pm_lock.bitmap[index / 64], index % 64);
+    ASSERT(result);
+}
+
 /*
  * send_packet
  *
@@ -580,8 +640,8 @@ int send_packet(PPACKET pkt, int role) {
 
     // Find an available PM. This will always succeed, as it will claim the next PM, even if it is in
     // its READY state.
-    pm = get_next_pm(network);
-    ASSERT(pm->status == WRITING);
+    BOOL status = get_next_pm(network, &pm);
+    if (!status) return PACKET_REJECTED;
     pm->total_size_in_bytes = total_packet_size_in_bytes;
 
     // Now that we have a PM, we need to get data slots for it.
@@ -590,8 +650,7 @@ int send_packet(PPACKET pkt, int role) {
     // If there are not enough available, we will release those slots and return.
     // We will also release the PM, putting it back in its FREE state.
     if (pm->number_of_slots_reserved < slots_needed) {
-        release_all_slots(pm, network);
-        pm->status = FREE;
+        free_pm(pm, network);
 #if DEBUG
         debug_info.packets_dropped_for_lack_of_slots++;
 #endif
@@ -620,8 +679,7 @@ int send_packet(PPACKET pkt, int role) {
     // and return.
     __except (EXCEPTION_EXECUTE_HANDLER) {
         printf("Error copying from transport packet.\n");
-        release_all_slots(pm, network);
-        pm->status = FREE;
+        free_pm(pm, network);
         ASSERT(FALSE);
         return PACKET_REJECTED;
     }
@@ -629,7 +687,6 @@ int send_packet(PPACKET pkt, int role) {
     // The packet has been added to the network. Now we will timestamp it with its arrival time
     // and set its status as READY.
     pm->arrival_time = time_now_ms() + LATENCY_MS;
-    pm->status = READY;
     SetEvent(network->packets_present);
 
     return PACKET_ACCEPTED;
@@ -647,15 +704,15 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
     if (role != ROLE_SENDER && role != ROLE_RECEIVER)   return NO_PACKET_AVAILABLE;
 
     // Allocate all necessary stack variables
-    PNET n;
+    PNET network;
     PPM pm;
     ULONG64 deadline;
     ULONG64 closest_eta = MAXULONG64;
     ULONG64 wait_time;
 
     // Then we determine which network state to select
-    n = &network_state.SR_net;
-    if (role == ROLE_SENDER) n = &network_state.RS_net;
+    network = &network_state.SR_net;
+    if (role == ROLE_SENDER) network = &network_state.RS_net;
 
     // Keep track of time
     deadline = time_now_ms() + timeout_ms;
@@ -663,7 +720,7 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
     while (TRUE) {
 
         // Find an available packet
-        closest_eta = try_get_packet_from_buffer(n, &pm);
+        closest_eta = try_get_packet_from_buffer(network, &pm);
 
         // If we were able to get a packet, then we will send its data up to the transport layer.
         if (closest_eta == 0) {
@@ -671,21 +728,19 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
             ASSERT(pm->total_size_in_bytes > 0);
 
             __try {
-                copy_from_slots_to_packet(pm, pkt, n);
+                copy_from_slots_to_packet(pm, pkt, network);
             }
             // If the memcopy fails, we assume a bad actor on the transport layer,
             // And we reject the packet.
             __except (EXCEPTION_EXECUTE_HANDLER) {
                 printf("Error copying data to transport packet\n");
-                pm->status = READY;
                 ASSERT(FALSE);
                 return PACKET_REJECTED;
             }
 
             // Great! The data was written to the packet. Let's free the data slots and move
             // the PM back into its FREE state
-            release_all_slots(pm, n);
-            pm->status = FREE;
+            free_pm(pm, network);
 
             // Success! One packet was received. We can now return.
             return PACKET_RECEIVED;
@@ -693,14 +748,14 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
 
         // If no packets in the network, we will reset our event.
         if (closest_eta == MAXULONG64) {
-            ResetEvent(n->packets_present);
+            ResetEvent(network->packets_present);
         }
 
         // We will also set out wait time -- ideally, we will wake up JUST when the next packet has arrived.
         wait_time = min(NET_RETRY_MS, max(0, closest_eta - time_now_ms()));
 
         // And now we wait
-        WaitForSingleObject(n->packets_present, (DWORD) wait_time);
+        WaitForSingleObject(network->packets_present, (DWORD) wait_time);
 
         // After waking up, we check for a timeout
         if (time_now_ms() > deadline) return NO_PACKET_AVAILABLE;

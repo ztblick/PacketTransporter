@@ -130,10 +130,14 @@ void app_sender(void) {
         ASSERT(transmission->time_sent_ms == 0);
         transmission->time_sent_ms = time_now_ms();
 
-        // Update its status to SENT
-        //TODO blickster if you called send there is a possibility that the transmission was recieved so this assert could unneseccarily fire
-        //ASSERT(transmission->status == UNSENT);
-       // transmission->status = SENT;
+        // We try to update the transmission's status to SENT.
+        // It is possible for the receiver to set the status directly to
+        // RECEIVED, which is okay.
+        SHORT result = InterlockedCompareExchange16(
+                    &transmission->status,
+                    SENT,
+                    UNSENT);
+        ASSERT(result == UNSENT || result == RECEIVED);
 
         // Bump up the sent count
         InterlockedIncrement16(&app.transmissions_sent);
@@ -154,7 +158,6 @@ void app_sender(void) {
 void app_receiver(void) {
 
     ULONG64 end_ms;
-//    APP_TRANSMISSION_INFO transmission;
     PAPP_TRANSMISSION_INFO info;
     int status;
     unsigned char result;
@@ -198,7 +201,6 @@ void app_receiver(void) {
         }
 
         // Try calling receive transmission
-        //TODO blickster you passed in the address
         status = receive_transmission(
             info->id,
             info->data_received,
@@ -214,14 +216,15 @@ void app_receiver(void) {
             ASSERT(result);
             continue;
         }
-
-//        ASSERT(info->id < app.transmission_count);
         ASSERT(info->bytes_received > 0 && info->bytes_received <= MAX_TRANSMISSION_LIMIT_KB * KB(1));
 
         // If successful -- update info!
         info->time_received_ms = time_now_ms();
-        info->status = RECEIVED;
 
+        // It is possible the status could be SENT or UNSENT (we may have beaten the sender to the punch).
+        // As long as the status isn't RECEIVED, though, we are good.
+        SHORT result = InterlockedExchange16(&info->status, RECEIVED);
+        ASSERT(result != RECEIVED);
 
         // Increment received count for all transmissions
         InterlockedIncrement16(&app.transmissions_received);
@@ -650,7 +653,6 @@ int main(int argc, char** argv) {
 
     // Now we will begin the test!
     run_test();
-//ASSERT(0)
     printf("Done!\n");
     printf("==================================================\n");
 

@@ -55,20 +55,20 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
 
     ULONG64 numPackets;
     DATA_PACKET packet;
-    UINT32 bytes_left_to_packetize = bytes_to_packetize;
+    UINT32 bytes_left_to_packetize = (INT32) bytes_to_packetize;
     // right now we are just assuming that we want every packet to be as full as possible.
     numPackets = bytes_to_packetize / MAX_PAYLOAD_SIZE;
     if (bytes_to_packetize % MAX_PAYLOAD_SIZE != 0) {
         numPackets++;
     }
 
-    UINT32 starting_packet_numer = minion_info.chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
+    UINT32 starting_packet_numer = (INT32) minion_info.chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
 
     for (int i = 0; i < numPackets; i++) {
         // I feel like there is an easier way of organizing the fields, but it would require a lot of blick work.
         packet.index_in_transmission = starting_packet_numer + i;
         packet.transmission_id = minion_info.transmission_id;
-        packet.n_packets_in_transmission = minion_info.n_packets_in_transmission;
+        packet.n_packets_in_transmission = (INT32) minion_info.n_packets_in_transmission;
         packet.must_be_zero = 0;
         packet.bytes_in_header = 16;
         packet.bytes_in_data_fields = 16;
@@ -169,7 +169,7 @@ DWORD sender_listener(LPVOID param)
         PSENDER_TRANSMISSION_INFO transmission_info = &g_sender_state.transmissions_in_progress[transmission_id];
 
 
-        for (int i = 0; i < packet.n_bits_to_read; i++)
+        for (UINT32 i = 0; i < packet.n_bits_to_read; i++)
         {
             BYTE current_byte = packet.bitmap[i / 8];
 
@@ -232,7 +232,7 @@ DWORD sender_minion(LPVOID param)
         {
             // Wait for the network latency before checking. Slight magic number but wanted
             // to add a bit of time for any overhead.
-            Sleep(LATENCY_MS * 1.2);
+            Sleep((DWORD) (LATENCY_MS * 1.2));
             all_acked = TRUE;
 
             // Go through the number of packets this minion is supposed to be working on.

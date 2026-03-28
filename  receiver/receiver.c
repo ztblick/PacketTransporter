@@ -226,9 +226,9 @@ COMM_PACKET assemble_COMM_packet_from_packet(DATA_PACKET pkt) {
     }
 
 
-    commPacket.n_bits_to_read  = numBytes * 8;
-    commPacket.bytes_in_bitmap = numBytes;
-    commPacket.first_packet_index = (bitmapStart * 8);
+    commPacket.n_bits_to_read  = (UINT32) numBytes * 8;
+    commPacket.bytes_in_bitmap = (UINT32) numBytes;
+    commPacket.first_packet_index = (UINT32) (bitmapStart * 8);
 
 
 
@@ -315,14 +315,13 @@ boolean check_transmission(UINT32 transmission_id) {
 
 
 int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
-    // TODO: Student implementation
-    // - Receive packets via receive_packet() or try_receive_packet()
-    // - Reassemble packets into complete transmissions
-    // - When complete, fill in out_id, dest, out_length and return 1
+
     int result;
     //Checks to see if the transmission has been initialized
 
     ULONG64 time = time_now_ms();
+
+    // TODO we still need to check for timeouts in this function.
     ULONG64 deadline = time + timeout_ms;
 
     while (TRUE) {

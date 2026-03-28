@@ -41,7 +41,7 @@ typedef struct transmission_info {
     PVOID data_sent;
     PVOID data_received;
     UINT32 id;
-    UINT32 status;
+    volatile SHORT status;
     LONG64 receive_count;
     size_t bytes_sent;
     size_t bytes_received;
