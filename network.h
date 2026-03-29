@@ -62,25 +62,12 @@
  * ============================================================================
  */
 
-/* Simulated link bandwidth in bits per second.
- * 100 Mbps is typical for fast broadband / local network.
- *
- * At 100 Mbps, a 1 KB packet takes ~82 microseconds to serialize.
- */
-#define BANDWIDTH_BPS                    100000000
-
 /* Simulated round-trip time in milliseconds.
  * 20 ms is typical for internet traffic (faster end).
  *
  * One-way propagation delay is half this value (10 ms).
  */
 #define LATENCY_MS                        20
-
-/* One-way propagation delay in milliseconds */
-#define PROPAGATION_DELAY_MS             (LATENCY_MS / 2)
-
-/* Bandwidth-delay product in bytes (how much data can be "in flight") */
-#define BANDWIDTH_DELAY_PRODUCT_BYTES    ((BANDWIDTH_BPS / 8) * LATENCY_MS / 1000)
 
 /* Maximum packets each metwork buffer can hold.
  * Packets are dropped when buffer is full (which should not happpen).

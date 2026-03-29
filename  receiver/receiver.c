@@ -319,10 +319,10 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
     int result;
     //Checks to see if the transmission has been initialized
 
-    ULONG64 time = time_now_ms();
+    ULONG64 time = time_now();
 
     // TODO we still need to check for timeouts in this function.
-    ULONG64 deadline = time + timeout_ms;
+    ULONG64 deadline = deadline_from_now_ms(timeout_ms);
 
     while (TRUE) {
 
@@ -359,7 +359,7 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
         write_to_cache(&local_pkt);
     }
 #if DEBUG
-    if (time_now_ms() > deadline) {
+    if (time_now() > deadline) {
         printf("Timed out waiting for transmission %d\n", transmission_id);
     }
 #endif

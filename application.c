@@ -127,8 +127,8 @@ void app_sender(void) {
         }
 
         // Timestamp it
-        ASSERT(transmission->time_sent_ms == 0);
-        transmission->time_sent_ms = time_now_ms();
+        ASSERT(transmission->time_sent == 0);
+        transmission->time_sent = time_now();
 
         // We try to update the transmission's status to SENT.
         // It is possible for the receiver to set the status directly to
@@ -157,7 +157,7 @@ void app_sender(void) {
  */
 void app_receiver(void) {
 
-    ULONG64 end_ms;
+    ULONG64 end_time;
     PAPP_TRANSMISSION_INFO info;
     int status;
     unsigned char result;
@@ -170,10 +170,10 @@ void app_receiver(void) {
     WaitForSingleObject(simulation_begin, INFINITE);
 
     // Set out timeout time
-    end_ms = time_now_ms() + RECEIVER_TIMEOUT_MS;
+    end_time = deadline_from_now_ms(RECEIVER_TIMEOUT_MS);
 
     // While there are still transmissions to receive AND we haven't timed out
-    while (time_now_ms() < end_ms && app.transmissions_received < app.transmission_count) {
+    while (time_now() < end_time && app.transmissions_received < app.transmission_count) {
 
         // Check the lock -- if it's totally 1s, move on to the next row
         slot = slot % app.transmission_count;
@@ -208,8 +208,6 @@ void app_receiver(void) {
             RECEIVE_TRANSMISSION_DEFAULT_TIMEOUT
             );
 
-
-
         // If unsuccessful, release the lock on this transmission and try again
         if (status == NO_TRANSMISSION_AVAILABLE) {
             result = InterlockedBitTestAndReset64(&app.lock_received[row], offset);
@@ -219,7 +217,7 @@ void app_receiver(void) {
         ASSERT(info->bytes_received > 0 && info->bytes_received <= MAX_TRANSMISSION_LIMIT_KB * KB(1));
 
         // If successful -- update info!
-        info->time_received_ms = time_now_ms();
+        info->time_received = time_now();
 
         // It is possible the status could be SENT or UNSENT (we may have beaten the sender to the punch).
         // As long as the status isn't RECEIVED, though, we are good.
@@ -231,7 +229,7 @@ void app_receiver(void) {
 
         // Let's look for another transmission! Reset the timeout, since we were successful
         slot++;
-        end_ms = time_now_ms() + RECEIVER_TIMEOUT_MS;
+        end_time = deadline_from_now_ms(RECEIVER_TIMEOUT_MS);
     }
 }
 
@@ -324,13 +322,13 @@ void print_stats(void) {
         }
 
         // Update total data sent and total time
-        stats.total_time_ms += info->time_received_ms - info->time_sent_ms;
+        stats.total_time += info->time_received - info->time_sent;
         stats.total_bytes += info->bytes_received;
     }
 
     if (stats.transmissions_received > 0) {
-        stats.latency_avg_ms = (double) stats.total_time_ms / stats.transmissions_received;
-        stats.throughput_bps = (double) stats.total_bytes / (double) stats.total_time_ms * 1000;
+        stats.latency_avg_ms = (double) tsc_to_ms(stats.total_time) / stats.transmissions_received;
+        stats.throughput_bps = (double) stats.total_bytes / (double) tsc_to_ms(stats.total_time) * 1000;
     }
 
     // Now print things out!
@@ -429,8 +427,8 @@ void create_transmission_data(void) {
         temp.id = i;
         temp.receive_count = 0;
         temp.status = UNSENT;
-        temp.time_sent_ms = 0;
-        temp.time_received_ms = 0;
+        temp.time_sent = 0;
+        temp.time_received = 0;
 
         // Fill the transmission with its pattern
         fill_transmission_with_pattern(temp.data_sent, temp.bytes_sent);

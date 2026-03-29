@@ -39,6 +39,7 @@ DEBUG_INFO debug_info;
 #endif
 
 #define TYPICAL_SLOT_CAPACITY 4
+#define NUM_PACKET_LISTS    64
 
 // TODO create list_head for next_packet_list, add it to the network struct
 // TODO initialize this list in the init function
@@ -59,7 +60,7 @@ DEBUG_INFO debug_info;
  * extra slot list.
  */
 typedef struct packet_metadata {
-    SLIST_HEADER flink;
+    SLIST_ENTRY flink;                          // NOTE: this field MUST be first.
     UINT32 number_of_slots_reserved;
     ULONG64 total_size_in_bytes;
     ULONG64 arrival_time;
@@ -79,11 +80,30 @@ typedef struct bitmap_lock {
 } BIT_LOCK, *PBIT_LOCK;
 
 /**
+ *  The timer wheel provides access to SLists of packet metadata.
+ *  We use this data structure to group PMs by arrival time.
+ *  Senders add them with InterlockedPushEntrySList. The particular
+ *  list is determined by the hand variable. We lazily bump the hand
+ *  once per millisecond by comparing the tick count to the saved timestamp.
+ *
+ *  NOTE: the hand grows beyond the bounds of the list array. To find the list
+ *  pointed to by the hand, we must use modulo:  index = hand % NUM_PACKET_LISTS
+ *
+ */
+typedef struct {
+    SLIST_HEADER lists[NUM_PACKET_LISTS];
+    volatile UINT32 hand;
+    volatile ULONG64 last_updated_time;
+} PM_TIMER_WHEEL, *PPM_TIMER_WHEEL;
+
+/**
  * The network struct keeps track of all data for one of the networks
  * (sender->receiver and receiver->sender). This includes a bitmap lock,
  * a set of PMs, and a buffer of packet data.
  */
 typedef struct network {
+    SLIST_HEADER receiver_packet_list;
+    PM_TIMER_WHEEL pm_wheel;
     BIT_LOCK net_lock;
     BIT_LOCK pm_lock;
     PPM metadata_slots;
@@ -149,6 +169,16 @@ VOID net_init(PNET n) {
 
     // Point the next_PM to the head of the PM array.
     n->next_PM_slot = 0;
+
+    // Initialize timer wheel
+    for (int i = 0; i < NUM_PACKET_LISTS; i++) {
+        InitializeSListHead(&n->pm_wheel.lists[i]);
+    }
+    n->pm_wheel.hand = 0;
+    n->pm_wheel.last_updated_time = time_now();
+
+    // Initialize receiver's packet list
+    InitializeSListHead(&n->receiver_packet_list);
 
 
 #if DEBUG
@@ -418,61 +448,6 @@ void release_extra_slots(PPM pm, UINT32 slots_needed, PNET net) {
 
 
 /**
- * @brief Finds and removes a packet that has "arrived" at the end of the network.
- * @param pnet The network in which we scan for an available packet
- * @param pm The pointer back to the caller's PM. If we find a packet to remove,
- *          we will write the address of its PM here.
- * @return If a packet is found, 0. Otherwise, the closest ETA.
- */
-ULONG64 try_get_packet_from_buffer(PNET pnet, PPM* pm_of_caller) {
-
-    ULONG64 closest_eta = MAXULONG64;
-    PPM pm;
-    PLONG64 bitmap = pnet->pm_lock.bitmap;
-    UINT32 slot = 0;
-
-    while (slot < NETWORK_BUFFER_NUMBER_OF_SLOTS) {
-
-        // Recalculate row and offset
-        UINT32 row = slot / 64;
-        UINT32 offset = slot % 64;
-        ULONG64 mask = (1LL << offset);
-
-        // If the entire 64 bit chunk of the bitmap is clear advance to the next chunk.
-        if (bitmap[row] == 0) {
-            slot = (row + 1) * 64 % NETWORK_BUFFER_NUMBER_OF_SLOTS;
-            continue;
-        }
-
-        // If this particular bit is clear, advance.
-        if (!(bitmap[row] & mask)) {
-            slot++;
-            continue;
-        }
-
-        // Okay, let's consider this PM.
-        pm = pnet->metadata_slots + slot;
-
-        // If it has not "arrived" yet, save its ETA
-        if (pm->arrival_time > time_now_ms()) {
-            closest_eta = min(closest_eta, pm->arrival_time);
-            continue;
-        }
-
-        // Okay, we are in business! This slot has arrived. We update our address and return.
-        // Note: this is a temporary step to remove race conditions while testing before we move on to
-        // our next architectural change.
-        // TODO: remove me when you make the changes
-        pm->arrival_time = MAXULONG64;
-        *pm_of_caller = pm;
-        return 0;
-    }
-
-    return closest_eta;
-}
-
-
-/**
  * @brief Copies the data from the packet into its slots, as given by the PM.
  * @param pm The PM, containing all the slots necessary to write into.
  * @param pkt The packet, whose data needs to be added to the network.
@@ -589,6 +564,127 @@ void free_pm(PPM pm, PNET network) {
     ASSERT(result);
 }
 
+void update_hand_if_necessary(PPM_TIMER_WHEEL pm_wheel) {
+    ULONG64 old_time = pm_wheel->last_updated_time;
+    ULONG64 new_time = time_now();
+
+    // Check to see if we should advance the hand
+    if (tsc_to_ms(new_time - old_time) <= 1) return;
+
+    // If one millisecond HAS passed, then we will try updating the time
+    if (InterlockedCompareExchange64(
+        (volatile LONG64*) &pm_wheel->last_updated_time,
+        new_time,
+        old_time) != old_time) return;
+
+    // If we won and updated the time, then it's our job to advance the hand
+    InterlockedIncrement((volatile LONG*) &pm_wheel->hand);
+}
+
+/**
+ * @brief Adds a packet metadata struct to the hand's SList. Advanced the hand, if necessary.
+ * @param pm The packet metadata to add to a list on the timer wheel
+ * @param pnet The network whose timer wheel accepts the packet metadata.
+ */
+void add_pm_to_list(PPM pm, PNET pnet) {
+    UINT32 current_hand = pnet->pm_wheel.hand % NUM_PACKET_LISTS;
+    InterlockedPushEntrySList(&pnet->pm_wheel.lists[current_hand], &pm->flink);
+    update_hand_if_necessary(&pnet->pm_wheel);
+}
+
+/**
+ * @brief Finds and removes a packet that has "arrived" at the end of the network.
+ * @param pnet The network in which we scan for an available packet
+ * @param pm The pointer back to the caller's PM. If we find a packet to remove,
+ *          we will write the address of its PM here.
+ * @return If a packet is found, 0. Otherwise, the closest ETA.
+ *          If no packets are available, returns MAXULONG64
+ */
+ULONG64 try_get_available_packet(PNET pnet, PPM* pm_of_caller) {
+    ULONG64 closest_eta = MAXULONG64;
+    ULONG64 time = time_now();
+    PPM pm;
+
+    while (TRUE) {
+        // First, check for an element on the global list.
+        // If one exists and it has arrived, we will pop it from the list.
+        // Then we check again: if we are the first to get this element and it has arrived,
+        // we will grab it and return!
+
+        // NOTE: we can do this cast since the flink is the first field in the PM.
+        pm = (PPM) RtlFirstEntrySList(&pnet->receiver_packet_list);
+        if (pm) {
+
+            // If the packet at the head hasn't arrived yet, return its ETA.
+            if (time < pm->arrival_time) return pm->arrival_time;
+
+            // If the packet has arrived, we will try to grab it.
+            pm = (PPM) InterlockedPopEntrySList(&pnet->receiver_packet_list);
+
+            // If we can get a packet and it has arrived -- it's ours! Save its address and return.
+            if (pm && time >= pm->arrival_time) {
+                *pm_of_caller = pm;
+                return 0;
+            }
+
+            // If we popped a valid packet, but it hasn't arrived, let's put it back on the list.
+            // Then we'll return its ETA.
+            if (pm) {
+                closest_eta = pm->arrival_time;
+                InterlockedPushEntrySList(&pnet->receiver_packet_list, &pm->flink);
+                return closest_eta;
+            }
+        }
+
+        // Now we know for sure there was no packet at the front of the global list.
+        // It's up to us to refill it, if we can.
+
+        // First, we will walk our way through the lists on the wheel from the index below the hand
+        // and around. The last non-empty list we encounter must be the oldest. We will flush it
+        // to the global list, then retry our function.
+        update_hand_if_necessary(&pnet->pm_wheel);
+        UINT32 hand = pnet->pm_wheel.hand % NUM_PACKET_LISTS;
+        UINT32 index = (hand + NUM_PACKET_LISTS - 1) % NUM_PACKET_LISTS;
+
+        // Check the first list. If it's null, return MAXULONG64. There are no available packets.
+        if (!RtlFirstEntrySList(&pnet->pm_wheel.lists[index])) return MAXULONG64;
+        UINT32 index_to_keep = index;
+        index = (index + NUM_PACKET_LISTS - 1) % NUM_PACKET_LISTS;
+
+        // Okay! We will find a list. Let's see if there's an older one.
+        while (index != hand) {
+
+            // Check out this list -- if it is empty, then we will return the previous non-null list.
+            if (!RtlFirstEntrySList(&pnet->pm_wheel.lists[index])) break;
+
+            index_to_keep = index;
+            index = (index + NUM_PACKET_LISTS - 1) % NUM_PACKET_LISTS;
+        }
+
+        // Now we will flush this list to the global list
+        PSLIST_ENTRY head = InterlockedFlushSList(&pnet->pm_wheel.lists[index_to_keep]);
+
+        // If someone beat us to this list, then we know there should be packets in the global list now!
+        if (!head) continue;
+
+        // We won the list! Let's push it to the global list.
+        PSLIST_ENTRY tail = head;
+        ULONG count = 1;
+        while (tail->Next) {
+            tail = tail->Next;
+            count++;
+        }
+        InterlockedPushListSListEx(&pnet->receiver_packet_list,
+                                    head,
+                                    tail,
+                                    count);
+
+        // Now we will try again!
+        time = time_now();
+    }
+    return MAXULONG64;
+}
+
 /*
  * send_packet
  *
@@ -686,7 +782,8 @@ int send_packet(PPACKET pkt, int role) {
 
     // The packet has been added to the network. Now we will timestamp it with its arrival time
     // and set its status as READY.
-    pm->arrival_time = time_now_ms() + LATENCY_MS;
+    pm->arrival_time = deadline_from_now_ms(LATENCY_MS);
+    add_pm_to_list(pm, network);
     SetEvent(network->packets_present);
 
     return PACKET_ACCEPTED;
@@ -715,17 +812,17 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
     if (role == ROLE_SENDER) network = &network_state.RS_net;
 
     // Keep track of time
-    deadline = time_now_ms() + timeout_ms;
+    deadline = deadline_from_now_ms(timeout_ms);
 
     while (TRUE) {
 
         // Find an available packet
-        closest_eta = try_get_packet_from_buffer(network, &pm);
+        closest_eta = try_get_available_packet(network, &pm);
 
         // If we were able to get a packet, then we will send its data up to the transport layer.
         if (closest_eta == 0) {
-            ASSERT(pm->status == READING);
             ASSERT(pm->total_size_in_bytes > 0);
+            ASSERT(pm->number_of_slots_reserved > 0);
 
             __try {
                 copy_from_slots_to_packet(pm, pkt, network);
@@ -752,13 +849,13 @@ int receive_packet(PPACKET pkt, ULONG64 timeout_ms, int role) {
         }
 
         // We will also set out wait time -- ideally, we will wake up JUST when the next packet has arrived.
-        wait_time = min(NET_RETRY_MS, max(0, closest_eta - time_now_ms()));
+        wait_time = min(NET_RETRY_MS, tsc_to_ms(max(0, closest_eta - time_now())));
 
         // And now we wait
         WaitForSingleObject(network->packets_present, (DWORD) wait_time);
 
         // After waking up, we check for a timeout
-        if (time_now_ms() > deadline) return NO_PACKET_AVAILABLE;
+        if (time_now() > deadline) return NO_PACKET_AVAILABLE;
 
         // If we don't have a timeout, then we will scan the buffer again!
     }

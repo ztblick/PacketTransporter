@@ -45,8 +45,8 @@ typedef struct transmission_info {
     LONG64 receive_count;
     size_t bytes_sent;
     size_t bytes_received;
-    ULONG64 time_sent_ms;
-    ULONG64 time_received_ms;
+    ULONG64 time_sent;
+    ULONG64 time_received;
 } APP_TRANSMISSION_INFO, *PAPP_TRANSMISSION_INFO;
 
 // The lock_sent field is used to protect against multiple sending threads sending
@@ -90,7 +90,7 @@ typedef struct test_stats {
 
     // Performance metrics
     size_t total_bytes;           // Total bytes across all transmissions
-    ULONG64 total_time_ms;        // Wall clock time from first send to last receive
+    ULONG64 total_time;           // Wall clock time from first send to last receive
     double throughput_bps;        // Bits per second
 
     // Latency metrics (in milliseconds)
