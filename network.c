@@ -41,13 +41,7 @@ DEBUG_INFO debug_info;
 #define TYPICAL_SLOT_CAPACITY 4
 #define NUM_PACKET_LISTS    64
 
-// TODO create list_head for next_packet_list, add it to the network struct
-// TODO initialize this list in the init function
 
-// TODO create timer wheel in network struct
-// TODO initialize it in the init function
-
-// TODO free all this data appropriately
 
 /**
  * A PM struct encapsulates all the data for one packet. It has the
