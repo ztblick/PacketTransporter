@@ -41,6 +41,9 @@ DEBUG_INFO debug_info;
 #define TYPICAL_SLOT_CAPACITY 4
 #define NUM_PACKET_LISTS    64
 
+#define DROP_PROBABILITY    0.01
+#define DROP_RATE (int) (DROP_PROBABILITY * RAND_MAX)
+
 
 
 /**
@@ -718,6 +721,11 @@ int send_packet(PPACKET pkt, int role) {
         return PACKET_REJECTED;
 
     total_packet_size_in_bytes += packet_payload_size_in_bytes;
+
+    // Applying dropped packets MUWAHAHAHAHA
+    if (rand() < DROP_RATE) {
+        return PACKET_ACCEPTED;
+    }
 
     // Select network based on role
     network = &network_state.SR_net;
