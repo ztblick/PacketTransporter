@@ -36,6 +36,8 @@ VOID create_sender(VOID)
     g_sender_state.transmissions_queue.next_read_index = 0;
     g_sender_state.transmissions_queue.next_write_index = 0;
 
+
+
     // Create sender listener thread.
     CreateThread(NULL, 0, sender_listener, NULL, 0, NULL);
 
@@ -51,7 +53,6 @@ VOID create_sender(VOID)
 
 VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, SENDER_MINION_INFO minion_info)
 {
-
     ULONG64 numPackets;
     DATA_PACKET packet;
     UINT32 bytes_left_to_packetize = bytes_to_packetize;
@@ -101,6 +102,7 @@ VOID send_packet_batch(ULONG64 number_of_packets_to_send)
 
 DWORD sender_listener(LPVOID param)
 {
+    WaitForSingleObject(simulation_begin, INFINITE);
     ULONG64 timeout_ms = 100;
 
     COMM_PACKET packet; // Will need to change this to an array of packet locations and receive them there ?
@@ -153,6 +155,7 @@ DWORD sender_listener(LPVOID param)
 
 DWORD sender_minion(LPVOID param)
 {
+    WaitForSingleObject(simulation_begin, INFINITE);
     // Init our briefcase to just 0 values
     SENDER_MINION_INFO briefcase = {0};
     PSENDER_MINION_INFO p_briefcase = &briefcase;
