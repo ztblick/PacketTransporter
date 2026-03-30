@@ -255,15 +255,19 @@ DWORD main_receiver_thread(LPVOID param) {
     WaitForSingleObject(simulation_begin, INFINITE);
 
     DATA_PACKET packet;
+    HANDLE events[2];
+    events[0] = g_receiver_state.packet_cache.packets_waiting_in_cache;
+    events[1] = simulation_end;
+    DWORD returnEvent;
 
     memset(&packet, 0, sizeof(DATA_PACKET));
     while (TRUE) {
-      if (WaitForSingleObject(simulation_end, 0) == WAIT_OBJECT_0) {
-          return 0;
-      }
+        returnEvent = WaitForMultipleObjects(2, events, FALSE, INFINITE);
 
-        // wait for multiple object
-       WaitForSingleObject(g_receiver_state.packet_cache.packets_waiting_in_cache, INFINITE);
+        //if the system shutdown event was signaled, exit
+        if (returnEvent - WAIT_OBJECT_0 == 1) {
+            return 0;
+        }
 
         while (TRUE) {
             ULONG64 return_value = read_from_cache(&packet);
