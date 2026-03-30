@@ -158,7 +158,7 @@ VOID net_init(PNET n) {
                                      NULL,                         // Default security attributes
                                      MANUAL_RESET,                 // Manual reset event!
                                      FALSE,                        // Initially the event is NOT set.
-                                     TEXT("BeginSimulationEvent")  // Event name
+                                     NULL                          // Anonymous event
                                     );
 
     // Point the next_PM to the head of the PM array.

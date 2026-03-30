@@ -10,6 +10,8 @@
 #define WORK_ARRAY_SIZE             256
 #define EMPTY_WORK_ARRAY_ID         UINT32_MAX
 
+CRITICAL_SECTION g_work_array_lock;
+
 
 typedef struct {
 

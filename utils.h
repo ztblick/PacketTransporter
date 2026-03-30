@@ -42,8 +42,8 @@ typedef struct universal_packet_header {
 } PACKET, *PPACKET;
 
 // Timing variables
-LARGE_INTEGER perf_frequency;
-LARGE_INTEGER time_start;
+extern LARGE_INTEGER perf_frequency;
+extern LARGE_INTEGER time_start;
 
 // Thread initialization information
 #define DEFAULT_SECURITY                ((LPSECURITY_ATTRIBUTES) NULL)
@@ -58,8 +58,8 @@ LARGE_INTEGER time_start;
 #define PAGE_SIZE_IN_BYTES                        4096
 #define PACKET_PAYLOAD_SIZE_IN_BYTES                      1024
 // Thread handles for starting and ending simulation
-HANDLE simulation_begin;
-HANDLE simulation_end;
+extern HANDLE simulation_begin;
+extern HANDLE simulation_end;
 
 // Helper functions
 PVOID zero_malloc(size_t bytes_to_allocate);
