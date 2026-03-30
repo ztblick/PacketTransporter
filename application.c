@@ -221,8 +221,8 @@ void app_receiver(void) {
 
         // It is possible the status could be SENT or UNSENT (we may have beaten the sender to the punch).
         // As long as the status isn't RECEIVED, though, we are good.
-        SHORT result = InterlockedExchange16(&info->status, RECEIVED);
-        ASSERT(result != RECEIVED);
+        SHORT status_result = InterlockedExchange16(&info->status, RECEIVED);
+        ASSERT(status_result != RECEIVED);
 
         // Increment received count for all transmissions
         InterlockedIncrement16(&app.transmissions_received);
@@ -497,6 +497,9 @@ void free_application_layer(void) {
     }
 
 }
+
+HANDLE simulation_begin;
+HANDLE simulation_end;
 
 void initialize_layers_and_all_data(void) {
 
