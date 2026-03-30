@@ -41,7 +41,7 @@ DEBUG_INFO debug_info;
 #define TYPICAL_SLOT_CAPACITY 4
 #define NUM_PACKET_LISTS    64
 
-#define DROP_PROBABILITY    0.01
+#define DROP_PROBABILITY    0.00
 #define DROP_RATE (int) (DROP_PROBABILITY * RAND_MAX)
 
 

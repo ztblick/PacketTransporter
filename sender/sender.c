@@ -62,7 +62,7 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
         numPackets++;
     }
 
-    UINT32 starting_packet_numer = (INT32) minion_info.chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
+    UINT32 starting_packet_number = (INT32) minion_info.chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
 
     for (int i = 0; i < numPackets; i++) {
         // I feel like there is an easier way of organizing the fields, but it would require a lot of blick work.
