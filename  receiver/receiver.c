@@ -226,9 +226,9 @@ COMM_PACKET assemble_COMM_packet_from_packet(DATA_PACKET pkt) {
     }
 
 
-    commPacket.n_bits_to_read  = numBytes * 8;
-    commPacket.bytes_in_bitmap = numBytes;
-    commPacket.first_packet_index = (bitmapStart * 8);
+    commPacket.n_bits_to_read  = (UINT32) numBytes * 8;
+    commPacket.bytes_in_bitmap = (UINT32) numBytes;
+    commPacket.first_packet_index = (UINT32) (bitmapStart * 8);
 
 
 
@@ -255,15 +255,19 @@ DWORD main_receiver_thread(LPVOID param) {
     WaitForSingleObject(simulation_begin, INFINITE);
 
     DATA_PACKET packet;
+    HANDLE events[2];
+    events[0] = g_receiver_state.packet_cache.packets_waiting_in_cache;
+    events[1] = simulation_end;
+    DWORD returnEvent;
 
     memset(&packet, 0, sizeof(DATA_PACKET));
     while (TRUE) {
-      if (WaitForSingleObject(simulation_end, 0) == WAIT_OBJECT_0) {
-          return 0;
-      }
+        returnEvent = WaitForMultipleObjects(2, events, FALSE, INFINITE);
 
-        // wait for multiple object
-       WaitForSingleObject(g_receiver_state.packet_cache.packets_waiting_in_cache, INFINITE);
+        //if the system shutdown event was signaled, exit
+        if (returnEvent - WAIT_OBJECT_0 == 1) {
+            return 0;
+        }
 
         while (TRUE) {
             ULONG64 return_value = read_from_cache(&packet);
@@ -315,15 +319,14 @@ boolean check_transmission(UINT32 transmission_id) {
 
 
 int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULONG64 timeout_ms) {
-    // TODO: Student implementation
-    // - Receive packets via receive_packet() or try_receive_packet()
-    // - Reassemble packets into complete transmissions
-    // - When complete, fill in out_id, dest, out_length and return 1
+
     int result;
     //Checks to see if the transmission has been initialized
 
-    ULONG64 time = time_now_ms();
-    ULONG64 deadline = time + timeout_ms;
+    ULONG64 time = time_now();
+
+    // TODO we still need to check for timeouts in this function.
+    ULONG64 deadline = deadline_from_now_ms(timeout_ms);
 
     while (TRUE) {
 
@@ -360,7 +363,7 @@ int reciever_handler(UINT32 transmission_id, PVOID dest, PSIZE_T out_length, ULO
         write_to_cache(&local_pkt);
     }
 #if DEBUG
-    if (time_now_ms() > deadline) {
+    if (time_now() > deadline) {
         printf("Timed out waiting for transmission %d\n", transmission_id);
     }
 #endif
