@@ -90,7 +90,7 @@ typedef struct test_stats {
 
     // Performance metrics
     size_t total_bytes;           // Total bytes across all transmissions
-    ULONG64 total_time;           // Wall clock time from first send to last receive
+    ULONG64 accumulated_time;     // Sum of time spent by each transmission
     double throughput_bps;        // Bits per second
 
     // Latency metrics (in milliseconds)

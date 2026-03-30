@@ -112,6 +112,10 @@ void app_sender(void) {
         // You won! Congrats. Now it is your job to send THIS transmission
         transmission = &app.transmission_info[slot];
 
+        // Timestamp it
+        ASSERT(transmission->time_sent == 0);
+        transmission->time_sent = time_now();
+
         // Send it
         status = send_transmission(
             transmission->id,
@@ -125,10 +129,6 @@ void app_sender(void) {
             InterlockedBitTestAndReset64(&app.lock_sent[row], offset);
             continue;
         }
-
-        // Timestamp it
-        ASSERT(transmission->time_sent == 0);
-        transmission->time_sent = time_now();
 
         // We try to update the transmission's status to SENT.
         // It is possible for the receiver to set the status directly to
@@ -275,6 +275,9 @@ void run_test(void) {
  */
 void print_stats(void) {
 
+    ULONG64 earliest_start = MAXULONG64;
+    ULONG64 latest_end = 0;
+
     PULONG_PTR start_sent;
     PULONG_PTR end_sent;
     PULONG_PTR start_received;
@@ -322,13 +325,20 @@ void print_stats(void) {
         }
 
         // Update total data sent and total time
-        stats.total_time += info->time_received - info->time_sent;
+        ASSERT(info->time_received > info->time_sent);
+        stats.accumulated_time += info->time_received - info->time_sent;
         stats.total_bytes += info->bytes_received;
+
+        // Update total time elapsed
+        earliest_start = min(earliest_start, info->time_sent);
+        latest_end = max(latest_end, info->time_received);
     }
 
+    ULONG64 elapsed_time = tsc_to_ms(latest_end - earliest_start);
+
     if (stats.transmissions_received > 0) {
-        stats.latency_avg_ms = (double) tsc_to_ms(stats.total_time) / stats.transmissions_received;
-        stats.throughput_bps = (double) stats.total_bytes / (double) tsc_to_ms(stats.total_time) * 1000;
+        stats.latency_avg_ms = (double) tsc_to_ms(stats.accumulated_time) / stats.transmissions_received;
+        stats.throughput_bps = (double) stats.total_bytes / (double) elapsed_time * 1000;
     }
 
     // Now print things out!
@@ -341,6 +351,7 @@ void print_stats(void) {
 
     printf("AVERAGE LATENCY: \t\t%.2f ms\n", stats.latency_avg_ms);
     printf("THROUGHPUT: \t\t\t%.1f Kbps\n", stats.throughput_bps / KB(1));
+    printf("TIME ELAPSED: \t\t\t%llu ms\n", elapsed_time);
 
 }
 

@@ -5,8 +5,8 @@
  * packets are assigned to a minion. This is the maximum number of contiguous packets
  * we will assign to a minion at any time.
  */
-#define MAX_CHUNK_SIZE_IN_PACKETS   4
-#define SENDER_MINION_COUNT         2
+#define MAX_CHUNK_SIZE_IN_PACKETS   64
+#define SENDER_MINION_COUNT         8
 #define WORK_ARRAY_SIZE             256
 #define EMPTY_WORK_ARRAY_ID         UINT32_MAX
 
