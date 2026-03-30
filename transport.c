@@ -76,9 +76,7 @@ int receive_transmission(UINT32 transmission_id, PVOID dest, PSIZE_T out_length,
     return returnVal;
 }
 BYTE write_to_cache(PDATA_PACKET Niko_Packet) {
-#if SUPERFLUOUS_PRINTS
     printf(".");
-#endif
     // Make sure packet exists/if Niko does a bad job
     ASSERT(Niko_Packet);
     // Attempt to reserve slot in cache to write into
