@@ -64,4 +64,7 @@ HANDLE simulation_end;
 // Helper functions
 PVOID zero_malloc(size_t bytes_to_allocate);
 void time_init(void);
-ULONG64 time_now_ms(void);
+ULONG64 time_now(void);
+ULONG64 ms_to_tsc(ULONG64 ms);
+ULONG64 tsc_to_ms(ULONG64 tsc);
+ULONG64 deadline_from_now_ms(ULONG64 ms);

@@ -41,3 +41,5 @@ set(HEADERS
 add_executable(PacketTransporter ${SOURCES} ${RECEIVER_SOURCE} ${HEADERS})
 
 target_include_directories(PacketTransporter PRIVATE ${CMAKE_SOURCE_DIR})
+
+target_link_libraries(PacketTransporter ntdll)
