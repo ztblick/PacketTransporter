@@ -5,9 +5,10 @@
  * packets are assigned to a minion. This is the maximum number of contiguous packets
  * we will assign to a minion at any time.
  */
-#define MAX_CHUNK_SIZE_IN_PACKETS   64
+#define MAX_CHUNK_SIZE_IN_PACKETS   128
 #define SENDER_MINION_COUNT         8
 #define WORK_ARRAY_SIZE             256
+#define MAX_PENDING_CHUNKS_PER_MINION   4
 #define EMPTY_WORK_ARRAY_ID         UINT32_MAX
 
 CRITICAL_SECTION g_work_array_lock;
@@ -163,3 +164,11 @@ DWORD sender_minion(LPVOID param);
 VOID find_work(PSENDER_MINION_INFO briefcase);
 
 UINT32 get_next_transmission_id(VOID);
+
+/**
+ * @brief Rebuilds and resends a single packet from a chunk that was not ACKed.
+ *
+ * @param info The minion's work info for the chunk containing the not ack'd packet.
+ * @param packet_offset_in_chunk The index of the packet within this chunk.
+ */
+VOID retransmit_packet(PSENDER_MINION_INFO info, ULONG64 packet_offset_in_chunk);
