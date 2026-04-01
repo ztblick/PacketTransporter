@@ -75,7 +75,7 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
         packet.bytes_in_payload = min(bytes_left_to_packetize, MAX_PAYLOAD_SIZE);
 
         __try {
-            memcpy(packet.data,(PVOID) ((ULONG64) transmission_data + i * MAX_PAYLOAD_SIZE), packet.bytes_in_payload);
+            memcpy(packet.data, (PBYTE) transmission_data + i * MAX_PAYLOAD_SIZE, packet.bytes_in_payload);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             printf("Failed to copy data to packet, likely a hack attempt\n");
             DebugBreak();
@@ -84,14 +84,53 @@ VOID packetize_contiguous(PVOID transmission_data, ULONG64 bytes_to_packetize, S
 
         bytes_left_to_packetize -= packet.bytes_in_payload;
 
-        if (send_packet((PPACKET) &packet, ROLE_SENDER) == PACKET_REJECTED) {
-            printf("Failed to send packet\n");
-            DebugBreak();
+        // Retry on PACKET_REJECTED — the network buffer may be temporarily full.
+        // If we exhaust retries, move on; the retransmission logic in sender_minion
+        // will catch this packet on the next ACK-check cycle.
+        {
+            int send_attempts = 0;
+            int send_result;
+            do {
+                send_result = send_packet((PPACKET) &packet, ROLE_SENDER);
+                if (send_result == PACKET_REJECTED) {
+                    send_attempts++;
+                    Sleep(1);
+                }
+            } while (send_result == PACKET_REJECTED && send_attempts < MAX_ATTEMPTS_NETWORK);
         }
 # if SUPERFLUOUS_PRINTS
     printf("Sending packet with id %llu and index %llu\n", packet.transmission_id,packet.index_in_transmission);
 #endif
     }
+}
+
+VOID retransmit_packet(PSENDER_MINION_INFO info, ULONG64 packet_offset_in_chunk)
+{
+    DATA_PACKET packet;
+
+    // Convert from chunk-relative offset to absolute packet index in the transmission
+    UINT32 index_in_transmission = (UINT32)(info->chunk_index * MAX_CHUNK_SIZE_IN_PACKETS + packet_offset_in_chunk);
+
+    // Figure out how many bytes this packet has
+    ULONG64 byte_offset = packet_offset_in_chunk * MAX_PAYLOAD_SIZE;
+    ULONG64 remaining = info->bytes_to_send - byte_offset;
+
+    packet.index_in_transmission = index_in_transmission;
+    packet.transmission_id = info->transmission_id;
+    packet.n_packets_in_transmission = (UINT32)info->n_packets_in_transmission;
+    packet.must_be_zero = 0;
+    packet.bytes_in_header = 16;
+    packet.bytes_in_data_fields = 16;
+    packet.bytes_in_payload = (UINT32)min(remaining, MAX_PAYLOAD_SIZE);
+
+    __try {
+        memcpy(packet.data, info->data_to_send + byte_offset, packet.bytes_in_payload);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        printf("Failed to copy data for retransmit\n");
+        return;
+    }
+
+    send_packet((PPACKET)&packet, ROLE_SENDER);
 }
 
 VOID send_packet_batch(ULONG64 number_of_packets_to_send)
@@ -156,74 +195,104 @@ DWORD sender_listener(LPVOID param)
 DWORD sender_minion(LPVOID param)
 {
     WaitForSingleObject(simulation_begin, INFINITE);
-    // Init our briefcase to just 0 values
-    SENDER_MINION_INFO briefcase = {0};
-    PSENDER_MINION_INFO p_briefcase = &briefcase;
+
+    typedef struct {
+        SENDER_MINION_INFO info;
+        BOOL active;
+    } PENDING_CHUNK;
+
+    PENDING_CHUNK pending_chunks[MAX_PENDING_CHUNKS_PER_MINION] = {0};
+    int num_pending = 0;
 
     while (TRUE)
     {
-        // Find our next work and update the briefcase with its info.
-        find_work(p_briefcase);
+        while (num_pending < MAX_PENDING_CHUNKS_PER_MINION)
+        {
+            SENDER_MINION_INFO briefcase = {0};
+            find_work(&briefcase);
 
-        // Check that we were able to find any work (if not, wait and retry).
-        if (p_briefcase->transmission_id == EMPTY_WORK_ARRAY_ID) {
-            Sleep(10);
+            // No work available right now
+            if (briefcase.transmission_id == EMPTY_WORK_ARRAY_ID)
+            {
+                break;
+            }
+
+            // Send the initial batch of packets for this chunk
+            packetize_contiguous(briefcase.data_to_send, briefcase.bytes_to_send, briefcase);
+
+            // Find a free slot in our pending array and track this chunk
+            for (int i = 0; i < MAX_PENDING_CHUNKS_PER_MINION; i++)
+            {
+                if (!pending_chunks[i].active)
+                {
+                    pending_chunks[i].info = briefcase;
+                    pending_chunks[i].active = TRUE;
+                    num_pending++;
+                    break;
+                }
+            }
+        }
+
+        // No work to do just wait and sleep
+        if (num_pending == 0)
+        {
+            Sleep(LATENCY_MS / 2);
             continue;
         }
 
-        // Packetize and send the data from the briefcase.
-        packetize_contiguous(p_briefcase->data_to_send, p_briefcase->bytes_to_send, briefcase);
+        Sleep(LATENCY_MS);
 
-        // Now we set up the ack'ing
-        PULONG64 bitmap = g_sender_state.transmissions_in_progress[p_briefcase->transmission_id].packet_status_bitmap;
-        ULONG64 first_packet = p_briefcase->chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
-        ULONG64 num_packets = (p_briefcase->bytes_to_send + MAX_PAYLOAD_SIZE - 1) / MAX_PAYLOAD_SIZE;
-
-        // While loop until everything is successfully ack'd.
-        boolean all_acked = FALSE;
-        while (!all_acked)
+        for (int i = 0; i < MAX_PENDING_CHUNKS_PER_MINION; i++)
         {
-            // Wait for the network latency before checking. Slight magic number but wanted
-            // to add a bit of time for any overhead.
-            Sleep((DWORD) (LATENCY_MS * 1.2));
-            all_acked = TRUE;
-
-            // Go through the number of packets this minion is supposed to be working on.
-            for (int i = 0; i < num_packets; i++)
+            if (!pending_chunks[i].active)
             {
-                ULONG64 packet_num = first_packet + i;
+                continue;
+            }
 
-                // Check that the current packet is ack'd, and if not, set all_acked to false.
-                if (!(bitmap[packet_num / 64] & 1ULL << (packet_num % 64)))
+            PSENDER_MINION_INFO minion_info = &pending_chunks[i].info;
+            PSENDER_TRANSMISSION_INFO transmission_info = &g_sender_state.transmissions_in_progress[minion_info->transmission_id];
+            PULONG64 bitmap = transmission_info->packet_status_bitmap;
+            ULONG64 first_packet = minion_info->chunk_index * MAX_CHUNK_SIZE_IN_PACKETS;
+            ULONG64 num_packets = (minion_info->bytes_to_send + MAX_PAYLOAD_SIZE - 1) / MAX_PAYLOAD_SIZE;
+
+            BOOL all_acked = TRUE;
+
+            for (int j = 0; j < num_packets; j++)
+            {
+                ULONG64 packet_num = first_packet + j;
+
+                if (!(bitmap[packet_num / 64] & (1ULL << (packet_num % 64))))
                 {
                     all_acked = FALSE;
+                    // This packet wasn't ack'd so we need to resend it
+                    retransmit_packet(minion_info, j);
+                }
+            }
+
+            if (all_acked)
+            {
+                // If the chunk is done remove it
+                pending_chunks[i].active = FALSE;
+                num_pending--;
+
+                // Check if the ENTIRE transmission is complete
+                BOOL transmission_done = TRUE;
+                for (ULONG64 i = 0; i < transmission_info->number_of_packets_in_transmission; i++)
+                {
+                    if (!(bitmap[i / 64] & (1ULL << (i % 64))))
+                    {
+                        transmission_done = FALSE;
+                        break;
+                    }
                 }
 
+                if (transmission_done)
+                {
+                    SetEvent(transmission_info->sending_complete_event);
+                }
             }
         }
-
-        PSENDER_TRANSMISSION_INFO info = &g_sender_state.transmissions_in_progress[p_briefcase->transmission_id];
-
-        // Check ALL of our packets in the transmission to see if the entire transmission is done.
-        boolean transmission_done = TRUE;
-        for (int i = 0; i < info->number_of_packets_in_transmission; i++)
-        {
-            if (!(bitmap[i / 64] & 1ULL << (i % 64)))
-            {
-                // If the entire transmission isn't done, just break.
-                transmission_done = FALSE;
-                break;
-            }
-        }
-
-        // Call our sending complete event if the entire transmission is finished.
-        if (transmission_done)
-        {
-            SetEvent(info->sending_complete_event);
-        }
-
     }
-
 
     return 0;
 }
